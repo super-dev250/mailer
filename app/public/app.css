@@ -61,6 +61,7 @@ a:hover { text-decoration: underline; }
   display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px;
   color: var(--ink-2); font-weight: 550;
 }
+button.nav-link { width: 100%; border: 0; background: none; font: inherit; font-weight: 550; text-align: left; cursor: pointer; }
 .nav-link:hover { background: var(--page); text-decoration: none; }
 .nav-link.active { background: var(--accent-wash); color: var(--accent-hover); }
 .run-status { margin-top: auto; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: 8px; font-size: 12.5px; }
@@ -241,5 +242,6 @@ td.fill { width: 30%; max-width: 0; overflow: hidden; text-overflow: ellipsis; w
   .sidebar { position: static; height: auto; flex-direction: row; flex-wrap: wrap; align-items: center; padding: 10px 12px; border-right: 0; border-bottom: 1px solid var(--line); }
   .brand { padding: 4px 8px; }
   .run-status { margin: 0 0 0 auto; padding: 6px 8px; grid-auto-flow: column; align-items: center; }
+  button.nav-link { width: auto; }
   .main { padding: 20px 16px 48px; }
 }

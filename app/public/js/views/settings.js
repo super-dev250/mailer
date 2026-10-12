@@ -1,7 +1,7 @@
 import { computed, reactive, ref } from '/vendor/vue.js';
 import { api, refreshOverview } from '../api.js';
 import { ago, count } from '../format.js';
-import { problem, signOut, store, toast } from '../store.js';
+import { problem, store, toast } from '../store.js';
 
 export const SettingsView = {
   setup() {
@@ -30,7 +30,7 @@ export const SettingsView = {
     const github = computed(() => store.overview.github);
     const workflowUrl = computed(() => `https://github.com/${github.value.repo}/actions/workflows/mailer.yml`);
 
-    return { form, busy, save, pace, github, workflowUrl, store, signOut, ago };
+    return { form, busy, save, pace, github, workflowUrl, store, ago };
   },
   template: `
     <div class="page-head">
@@ -116,10 +116,8 @@ export const SettingsView = {
         <p v-if="!github.can_dispatch" class="muted">
           Sending starts with the next hourly run. To start runs from this app instead of waiting, add the optional DISPATCH_TOKEN secret described in the README.
         </p>
-        <div class="row">
-          <a v-if="github.repo" class="btn" :href="workflowUrl" target="_blank" rel="noopener">Open the workflow on GitHub <Icon name="external" /></a>
-          <span class="spacer"></span>
-          <button type="button" class="btn ghost" @click="signOut">Sign out</button>
+        <div v-if="github.repo" class="row">
+          <a class="btn" :href="workflowUrl" target="_blank" rel="noopener">Open the workflow on GitHub <Icon name="external" /></a>
         </div>
       </div>
     </div>`,

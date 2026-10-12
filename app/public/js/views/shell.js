@@ -3,7 +3,7 @@
 import { computed, onMounted, ref, watch } from '/vendor/vue.js';
 import { api, refreshOverview } from '../api.js';
 import { ago, plural } from '../format.js';
-import { problem, store, toast } from '../store.js';
+import { problem, signOut, store, toast } from '../store.js';
 import { CampaignView } from './campaign.js';
 import { CampaignsView } from './campaigns.js';
 import { ContactsView } from './contacts.js';
@@ -44,7 +44,7 @@ export const Shell = {
       toast('The Mailer workflow is starting. Results show up here in a minute or two.');
     }
 
-    return { NAV, store, failure, load, run, workflowUrl, runNow: () => runNow().catch(problem) };
+    return { NAV, store, failure, load, run, workflowUrl, signOut, runNow: () => runNow().catch(problem) };
   },
   template: `
     <div v-if="store.overview" class="shell">
@@ -61,6 +61,7 @@ export const Shell = {
           <button v-if="store.overview.github.can_dispatch" type="button" class="btn compact" @click="runNow"><Icon name="play" /> Run now</button>
           <a v-else-if="store.overview.github.repo" class="btn compact" :href="workflowUrl" target="_blank" rel="noopener">Run on GitHub <Icon name="external" /></a>
         </div>
+        <button type="button" class="nav-link" @click="signOut"><Icon name="logout" /> Sign out</button>
       </aside>
       <main class="main">
         <CampaignView v-if="store.route.view === 'campaigns' && store.route.id" :id="store.route.id" :key="store.route.id" />
