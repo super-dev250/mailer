@@ -1,0 +1,45 @@
+// Entry point of the Mailer workflow. Reads its configuration from the environment,
+// which GitHub Actions fills from the repository secrets.
+
+import { appendFile } from 'node:fs/promises';
+import { createApp } from './app.js';
+import { checkInbox } from './inbox.js';
+import { run } from './run.js';
+import { createMailer } from './send.js';
+
+const env = process.env;
+
+const missing = ['APP_URL', 'APP_SECRET', 'GMAIL_USER', 'GMAIL_APP_PASSWORD'].filter((name) => !env[name]?.trim());
+if (missing.length) {
+  // Not a failure: the schedule starts with the first push, before setup is finished.
+  console.log(`::warning::Mailer is not set up yet. Missing secrets: ${missing.join(', ')}. See the README.`);
+  process.exit(0);
+}
+
+const user = env.GMAIL_USER.trim();
+// Google shows app passwords in four groups separated by spaces.
+const auth = { user, pass: env.GMAIL_APP_PASSWORD.replace(/\s+/g, '') };
+// The defaults are Gmail's. Another mailbox works by setting SMTP_HOST and IMAP_HOST.
+const smtpPort = Number(env.SMTP_PORT) || 465;
+const smtp = { host: env.SMTP_HOST || 'smtp.gmail.com', port: smtpPort, secure: smtpPort === 465, auth };
+const imap = { host: env.IMAP_HOST || 'imap.gmail.com', port: Number(env.IMAP_PORT) || 993, secure: true, auth };
+
+let summary;
+try {
+  summary = await run({
+    app: createApp(env.APP_URL, env.APP_SECRET.trim()),
+    mailer: createMailer({ user, transport: smtp }),
+    checkInbox: (state) => checkInbox({ imap, user, ...state }),
+    user,
+  });
+} catch (error) {
+  summary = { sent: 0, failed: 0, replies: 0, bounces: 0, error: error.message };
+}
+
+const line = `Sent ${summary.sent} · Failed ${summary.failed} · Replies ${summary.replies} · Bounces ${summary.bounces}`;
+console.log(line);
+if (summary.error) console.log(`::error::${summary.error}`);
+if (env.GITHUB_STEP_SUMMARY) {
+  await appendFile(env.GITHUB_STEP_SUMMARY, `### Mailer run\n\n${line}\n${summary.error ? `\n**Problem:** ${summary.error}\n` : ''}`);
+}
+process.exit(summary.error ? 1 : 0);

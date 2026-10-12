@@ -1,0 +1,2 @@
+# Same line endings on Windows and on the Linux machines GitHub Actions uses.
+* text=auto eol=lf

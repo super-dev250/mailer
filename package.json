@@ -1,0 +1,29 @@
+{
+  "name": "mailer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Email campaigns from your own Gmail: a Cloudflare Worker app for editing and tracking, GitHub Actions for sending.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node scripts/vendor.mjs && wrangler dev --config app/wrangler.json",
+    "runner": "node --env-file-if-exists=.env runner/index.js",
+    "test": "node --test --test-reporter=spec \"test/*.test.js\"",
+    "deploy": "node scripts/deploy.mjs"
+  },
+  "dependencies": {
+    "html-to-text": "^10.0.1",
+    "imapflow": "^2.3.0",
+    "mailparser": "^3.9.37",
+    "nodemailer": "^10.0.16"
+  },
+  "devDependencies": {
+    "jodit": "^4.17.3",
+    "smtp-server": "^3.19.18",
+    "vue": "^3.5.43",
+    "wrangler": "^4.149.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+
+# Secrets for local development. Never commit these.
+.env
+.dev.vars
+
+# Generated
+.wrangler/
+app/wrangler.deploy.json
+app/public/vendor/
+
+# Editor and assistant settings
+.claude/
+.vscode/
+*.log

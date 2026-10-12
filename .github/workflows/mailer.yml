@@ -1,0 +1,37 @@
+name: Mailer
+
+# Sends the next batch of queued emails through Gmail, then reads the mailbox
+# for replies and bounces. All of it is configured in the web app.
+
+on:
+  schedule:
+    # Every hour, away from the top of the hour when GitHub's scheduler is busiest.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, so the mailbox is never used by two runs at once.
+concurrency:
+  group: mailer
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: Send and check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --omit=dev
+      - run: node runner/index.js
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}

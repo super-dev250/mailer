@@ -1,0 +1,117 @@
+// The database creates its own tables on first use, so there is no migration step to run.
+
+const SCHEMA_VERSION = 1;
+
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    fields TEXT NOT NULL DEFAULT '{}',
+    list TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS contacts_list ON contacts (list, status)`,
+  `CREATE TABLE IF NOT EXISTS campaigns (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    subject TEXT NOT NULL DEFAULT '',
+    preheader TEXT NOT NULL DEFAULT '',
+    body_html TEXT NOT NULL DEFAULT '',
+    list TEXT NOT NULL DEFAULT '',
+    links TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+  )`,
+  // One row per email to one recipient. `status` is how far sending got;
+  // the timestamps record what happened to the email afterwards.
+  `CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns (id) ON DELETE CASCADE,
+    contact_id INTEGER REFERENCES contacts (id) ON DELETE SET NULL,
+    email TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    is_test INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'queued',
+    error TEXT,
+    queued_at TEXT NOT NULL,
+    claimed_at TEXT,
+    sent_at TEXT,
+    delivered_at TEXT,
+    opened_at TEXT,
+    open_count INTEGER NOT NULL DEFAULT 0,
+    clicked_at TEXT,
+    click_count INTEGER NOT NULL DEFAULT 0,
+    replied_at TEXT,
+    reply_snippet TEXT,
+    bounced_at TEXT,
+    unsubscribed_at TEXT,
+    UNIQUE (campaign_id, contact_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS messages_status ON messages (status, sent_at)`,
+  `CREATE INDEX IF NOT EXISTS messages_email ON messages (email)`,
+  `CREATE TABLE IF NOT EXISTS images (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
+];
+
+export const DEFAULT_SETTINGS = {
+  sender_name: '',
+  postal_address: '',
+  unsubscribe_text: 'Unsubscribe',
+  batch_size: 25,
+  delay_seconds: 5,
+  daily_limit: 100,
+  track_opens: true,
+  track_clicks: true,
+};
+
+export const now = () => new Date().toISOString();
+export const ago = (milliseconds) => new Date(Date.now() - milliseconds).toISOString();
+
+/** Everything in the key-value `settings` table, as one object. */
+export async function getValues(db) {
+  const { results } = await db.prepare('SELECT key, value FROM settings').all();
+  return Object.fromEntries(results.map((row) => [row.key, JSON.parse(row.value)]));
+}
+
+export async function getSettings(db) {
+  return { ...DEFAULT_SETTINGS, ...(await getValues(db)).settings };
+}
+
+/** A statement that stores one value. Run it, or include it in a batch. */
+export function setValue(db, key, value) {
+  return db
+    .prepare('INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2')
+    .bind(key, JSON.stringify(value));
+}
+
+async function migrate(db) {
+  const version = await db
+    .prepare(`SELECT value FROM settings WHERE key = 'schema_version'`)
+    .first('value')
+    .catch(() => null);
+  if (Number(version) === SCHEMA_VERSION) return;
+  await db.batch([...SCHEMA.map((sql) => db.prepare(sql)), setValue(db, 'schema_version', SCHEMA_VERSION)]);
+}
+
+let migrated;
+
+/** Resolves once the tables exist. Checked once per Worker instance. */
+export function ready(db) {
+  migrated ??= migrate(db).catch((error) => {
+    migrated = undefined;
+    throw error;
+  });
+  return migrated;
+}
