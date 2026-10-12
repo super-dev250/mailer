@@ -106,6 +106,7 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .check input { margin-top: 3px; }
 .with-menu { display: flex; gap: 8px; }
 .with-menu > input { flex: 1; min-width: 0; }
+.field-row.align-end { align-items: end; }
 
 .menu { position: relative; }
 .menu-list {

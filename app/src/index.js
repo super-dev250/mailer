@@ -5,6 +5,7 @@ import * as api from './api.js';
 import { ready } from './db.js';
 import { HttpError, json } from './http.js';
 import * as runner from './runner.js';
+import * as scrape from './scrape.js';
 import * as track from './track.js';
 
 const routes = [];
@@ -42,6 +43,8 @@ route('POST', '/api/campaigns/:id/attachments', api.addAttachment);
 route('PUT', '/api/attachments/:id/parts/:part', api.uploadPart);
 route('DELETE', '/api/attachments/:id', api.deleteAttachment);
 route('POST', '/api/images', api.uploadImage);
+
+route('POST', '/api/scraper/search', scrape.search);
 
 route('POST', '/api/runner/claim', runner.claim);
 route('POST', '/api/runner/match', runner.match);
@@ -93,7 +96,7 @@ export default {
       });
       return result instanceof Response ? result : json(result);
     } catch (error) {
-      if (error instanceof HttpError) return json({ error: error.message }, error.status);
+      if (error instanceof HttpError) return json({ error: error.message, ...error.extra }, error.status);
       console.error(error);
       return json({ error: 'Something went wrong on the server.' }, 500);
     }
