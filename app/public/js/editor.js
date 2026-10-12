@@ -6,9 +6,11 @@ import { loadScript, loadStyle } from './load.js';
 import { problem } from './store.js';
 
 const OPTIONS = {
+  // No maxHeight: the box grows with the message and the page scrolls, rather than a short,
+  // internally-scrolling box within the page — which also avoids Windows' non-overlay scrollbar
+  // track staying visibly drawn the moment content gets even a pixel past a fixed cap.
   height: 'auto',
   minHeight: 360,
-  maxHeight: 720,
   toolbarAdaptive: false,
   toolbarSticky: false,
   statusbar: false,
