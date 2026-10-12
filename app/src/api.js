@@ -6,6 +6,7 @@ import { check } from './http.js';
 import { DEFAULT_SETTINGS, getValues, now, setValue } from './db.js';
 import { canDispatch, dispatch } from './github.js';
 import { canScrape } from './scrape.js';
+import { canScrape as canScrapeSlack } from './slack.js';
 
 const PAGE_SIZE = 50;
 const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif' };
@@ -45,6 +46,7 @@ export async function overview({ db, env }) {
     sender_email: values.sender_email ?? '',
     github: { repo: env.GITHUB_REPO ?? '', can_dispatch: canDispatch(env) },
     scraper: { can_scrape: canScrape(env) },
+    slack: { can_scrape: canScrapeSlack(env) },
   };
 }
 

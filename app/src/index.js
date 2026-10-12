@@ -6,6 +6,7 @@ import { ready } from './db.js';
 import { HttpError, json } from './http.js';
 import * as runner from './runner.js';
 import * as scrape from './scrape.js';
+import * as slack from './slack.js';
 import * as track from './track.js';
 
 const routes = [];
@@ -46,6 +47,7 @@ route('DELETE', '/api/attachments/:id', api.deleteAttachment);
 route('POST', '/api/images', api.uploadImage);
 
 route('POST', '/api/scraper/search', scrape.search);
+route('POST', '/api/slack/search', slack.search);
 
 route('POST', '/api/runner/claim', runner.claim);
 route('POST', '/api/runner/match', runner.match);

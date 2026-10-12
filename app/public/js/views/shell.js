@@ -9,16 +9,18 @@ import { CampaignsView } from './campaigns.js';
 import { ContactsView } from './contacts.js';
 import { ScraperView } from './scraper.js';
 import { SettingsView } from './settings.js';
+import { SlackScraperView } from './slackScraper.js';
 
 const NAV = [
   { view: 'campaigns', label: 'Campaigns', icon: 'send' },
   { view: 'contacts', label: 'Contacts', icon: 'users' },
   { view: 'scraper', label: 'GitHub contacts', icon: 'search' },
+  { view: 'slack', label: 'Slack contacts', icon: 'search' },
   { view: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
 export const Shell = {
-  components: { CampaignView, CampaignsView, ContactsView, ScraperView, SettingsView },
+  components: { CampaignView, CampaignsView, ContactsView, ScraperView, SettingsView, SlackScraperView },
   setup() {
     const failure = ref('');
     const load = () =>
@@ -70,6 +72,7 @@ export const Shell = {
         <CampaignsView v-else-if="store.route.view === 'campaigns'" />
         <ContactsView v-else-if="store.route.view === 'contacts'" />
         <ScraperView v-else-if="store.route.view === 'scraper'" />
+        <SlackScraperView v-else-if="store.route.view === 'slack'" />
         <SettingsView v-else-if="store.route.view === 'settings'" />
         <div v-else class="empty"><h2>Page not found</h2><a class="btn" href="#/campaigns">Go to campaigns</a></div>
       </main>

@@ -89,6 +89,19 @@ The **GitHub contacts** page works through the entire public commit history on G
 
 Press **Start** and it goes through GitHub's entire commit history on its own. It keeps going, including while you visit other pages in the app, until it has gone through all of history or you press **Stop**; either way, what it has found so far is kept. Because GitHub allows only a handful of these searches per minute, going through all of history can take a long time — pressing **Start** again after a **Stop** resumes from where it left off (shown as **Resume**) instead of starting over, so stopping to use the results so far never loses progress. **Export CSV** downloads the list, and **Add to contacts** adds everyone found to a list of your choice.
 
+### Optional: find Slack contacts
+
+The **Slack contacts** page searches messages in a Slack workspace for email addresses people have posted, and collects the display name, address and a link back to the message. Only addresses at well-known webmail providers (Gmail, Outlook, Yahoo, iCloud and similar) are kept, for the same reason as the GitHub contacts page, and anyone already in your contacts is left out too. Unlike GitHub contacts, Slack has no history to crawl on its own, so a search query is required — e.g. `gmail.com OR outlook.com OR yahoo.com` to find messages that mention any of those domains, or your own narrower query using Slack's search operators. It needs its own token, because Slack's search API only works with a token that can search as a real member, not a bot.
+
+1. Open <https://api.slack.com/apps> and create a new app (**From scratch**) in the workspace you want to search.
+2. Under **OAuth & Permissions**, add the `search:read` **User Token Scope**.
+3. **Install to Workspace** and approve it.
+4. Copy the **User OAuth Token** (starts with `xoxp-`). Slack shows it on the same page afterwards too, so note the app name in case it needs revoking later.
+5. In this repository open **Settings > Secrets and variables > Actions > New repository secret**, name it `SLACK_API_TOKEN` and paste the token.
+6. In the Actions tab open **Test and deploy** and press **Run workflow**, so the app receives the token.
+
+Type a search query and press **Start**. It pages through every matching message, including while you visit other pages in the app, until there are no more pages or you press **Stop**; either way, what it has found so far is kept. Because Slack rate-limits these searches, going through many pages can take a while — pressing **Start** again after a **Stop**, with the same query, resumes from where it left off (shown as **Resume**) instead of starting over. **Export CSV** downloads the list, and **Add to contacts** adds everyone found to a list of your choice.
+
 ## Using it
 
 1. **Contacts > Import file.** Choose your Excel or CSV file. Check that the right column was recognised as the email address and give the list a name. Every other column is kept and can be used to personalise emails. Each address exists only once in your contacts: before you import, the screen shows which addresses you already have, and those are left out. Capital letters, invisible characters copied from a web page, or a form like `Lee Carter <lee@example.com>` do not make an address count as new. Adding a contact by hand follows the same rule.
