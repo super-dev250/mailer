@@ -19,8 +19,10 @@ const SAVE_LABELS = { saved: 'All changes saved', dirty: 'Unsaved changes', savi
 
 export const CampaignEditor = {
   components: { RichEditor },
-  props: { campaign: Object, attachments: Array },
-  emits: ['started'],
+  // `locked`: this is a paused campaign being edited, not a fresh draft. The audience was already
+  // fixed when it started, and there is no "start sending" left to do, only to save and go back.
+  props: { campaign: Object, attachments: Array, locked: { type: Boolean, default: false } },
+  emits: ['started', 'done'],
   setup(props, { emit }) {
     const id = props.campaign.id;
     const form = reactive({
@@ -213,11 +215,14 @@ export const CampaignEditor = {
       return `${count(settings.value.batch_size)} per run and at most ${count(settings.value.daily_limit)} a day: about ${plural(runs, 'run')}${days > 1 ? ` over ${days} days` : ''}.`;
     });
 
+    // act() already saves before running its action, so this just needs to wait for that and leave.
+    const finishEditing = () => act(async () => emit('done'));
+
     return {
       files, sendingFiles, attach, formatBytes, detach: (file) => detach(file).catch(problem),
       form, lists, audienceSize, sample, mergeItems, unknownTags, editor, subjectInput, insertInSubject,
       preview, device, dialog, busy, uploading, button, testEmail, pace, settings, store, SAVE_LABELS, saveState,
-      openButtonDialog, closeButtonDialog, insertButton, sendTest, start, count, plural,
+      openButtonDialog, closeButtonDialog, insertButton, sendTest, start, finishEditing, count, plural,
       remove: () => remove().catch(problem),
     };
   },
@@ -225,13 +230,19 @@ export const CampaignEditor = {
     <a class="back" href="#/campaigns"><Icon name="back" /> Campaigns</a>
     <div class="page-head">
       <h1>{{ form.name || 'Untitled campaign' }}</h1>
-      <span class="badge ring">Draft</span>
+      <span class="badge ring">{{ locked ? 'Paused — editing' : 'Draft' }}</span>
       <div class="actions">
         <span class="save-state">{{ SAVE_LABELS[saveState] }}</span>
-        <button type="button" class="btn ghost danger" title="Delete this draft" aria-label="Delete this draft" @click="remove"><Icon name="trash" /></button>
+        <button v-if="!locked" type="button" class="btn ghost danger" title="Delete this draft" aria-label="Delete this draft" @click="remove"><Icon name="trash" /></button>
         <button type="button" class="btn" @click="dialog = 'test'"><Icon name="send" /> Send test</button>
-        <button type="button" class="btn primary" @click="dialog = 'start'"><Icon name="play" /> Start sending</button>
+        <button v-if="locked" type="button" class="btn primary" :disabled="busy" @click="finishEditing"><Icon name="check" /> Done editing</button>
+        <button v-else type="button" class="btn primary" @click="dialog = 'start'"><Icon name="play" /> Start sending</button>
       </div>
+    </div>
+
+    <div v-if="locked" class="notice">
+      <Icon name="info" />
+      <span>Recipients already emailed keep what they got. Anyone not yet emailed gets whatever this is set to once sending resumes.</span>
     </div>
 
     <div class="editor-layout">
@@ -244,11 +255,14 @@ export const CampaignEditor = {
           </div>
           <div class="field">
             <label for="campaign-list">Send to</label>
-            <select id="campaign-list" v-model="form.list">
+            <select id="campaign-list" v-model="form.list" :disabled="locked">
               <option value="">All contacts</option>
               <option v-for="item in lists" :key="item.list" :value="item.list">{{ item.list }}</option>
             </select>
-            <span class="hint">{{ plural(audienceSize, 'contact') }} to email. Anyone already emailed, or waiting in another campaign, is left out.</span>
+            <span class="hint">
+              <template v-if="locked">Set when this campaign started; it cannot be changed now.</template>
+              <template v-else>{{ plural(audienceSize, 'contact') }} to email. Anyone already emailed, or waiting in another campaign, is left out.</template>
+            </span>
           </div>
         </div>
         <div class="field">

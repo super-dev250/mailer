@@ -218,7 +218,11 @@ const NO_STATS = counts({
 const hasInlineImage = (html) => /src\s*=\s*["'](data|blob):/i.test(html);
 const isBlank = (html) => !html.replace(/<(?!img\b)[^>]*>|&nbsp;|\s/g, '');
 
-const LOCKED = 'This campaign has started, so its content is locked. Duplicate it to change it.';
+const LOCKED = 'Pause this campaign to change its content, or duplicate it to change it without pausing.';
+// Content can be changed while nothing is actively being sent: a draft, or a campaign paused
+// mid-way through. Recipients already sent to keep what they got; anyone not yet sent to gets
+// whatever the content is at the moment their email actually goes out.
+const canEditContent = (status) => status === 'draft' || status === 'paused';
 
 function idOf(value, what) {
   const id = Number(value);
@@ -331,9 +335,12 @@ export async function campaignLinkStats({ db, params }) {
 
 export async function updateCampaign({ db, params, body }) {
   const campaign = await loadCampaign(db, params);
-  check(campaign.status === 'draft', 409, LOCKED);
+  check(canEditContent(campaign.status), 409, LOCKED);
   const input = await body();
   const html = text(input.body_html, 500_000);
+  // The audience was already fixed when the campaign started: who gets queued happens once, at
+  // start, so changing it afterwards would be misleading rather than useful.
+  const list = campaign.status === 'draft' ? text(input.list, 100) : campaign.list;
   await db
     .prepare('UPDATE campaigns SET name = ?, subject = ?, preheader = ?, body_html = ?, list = ?, links = ? WHERE id = ?')
     .bind(
@@ -341,7 +348,7 @@ export async function updateCampaign({ db, params, body }) {
       text(input.subject, 300),
       text(input.preheader, 300),
       html,
-      text(input.list, 100),
+      list,
       JSON.stringify(extractLinks(html)),
       campaign.id,
     )
@@ -391,7 +398,16 @@ const changeStatus = (from, to) => async ({ db, env, params }) => {
   return { started: to === 'sending' && (await dispatch(env).catch(() => false)) };
 };
 export const pauseCampaign = changeStatus('sending', 'paused');
-export const resumeCampaign = changeStatus('paused', 'sending');
+
+// Content can change while paused, so this is checked again here: resuming with, say, no subject
+// or an image still uploading would otherwise only be caught once sending actually failed.
+export async function resumeCampaign({ db, env, params }) {
+  const campaign = await loadCampaign(db, params);
+  check(campaign.status === 'paused', 409, 'The campaign is not in a state that allows this.');
+  await checkSendable(db, campaign);
+  await db.prepare(`UPDATE campaigns SET status = 'sending' WHERE id = ?`).bind(campaign.id).run();
+  return { started: await dispatch(env).catch(() => false) };
+}
 
 // A test goes through exactly the same path as a real email, to one address, outside the statistics.
 export async function testCampaign({ db, env, params, body }) {
@@ -440,7 +456,7 @@ export async function listMessages({ db, params, url }) {
 // at most 2 MB. The browser encodes the parts, so the Worker only stores text.
 export async function addAttachment({ db, params, body }) {
   const campaign = await loadCampaign(db, params);
-  check(campaign.status === 'draft', 409, LOCKED);
+  check(canEditContent(campaign.status), 409, LOCKED);
   const input = await body();
   // The file's own name only: no folders, control characters or quotes.
   const name = text(input.name, 200).replace(/^.*[\\/]/, '').replace(/[\p{Cc}"]/gu, '').trim();
@@ -462,7 +478,7 @@ async function loadAttachment(db, params) {
     .bind(idOf(params.id, 'Attachment'))
     .first();
   check(file, 404, 'Attachment not found.');
-  check(file.status === 'draft', 409, LOCKED);
+  check(canEditContent(file.status), 409, LOCKED);
   return file;
 }
 

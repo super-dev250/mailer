@@ -35,7 +35,7 @@ function csvCell(value) {
 
 export const CampaignReport = {
   props: { campaign: Object, attachments: Array, stats: Object },
-  emits: ['changed'],
+  emits: ['changed', 'edit'],
   setup(props, { emit }) {
     const id = props.campaign.id;
     const filter = ref('');
@@ -209,6 +209,7 @@ export const CampaignReport = {
         <button type="button" class="btn" @click="viewEmail"><Icon name="eye" /> View email</button>
         <button type="button" class="btn" :disabled="busy" @click="duplicate"><Icon name="copy" /> Duplicate</button>
         <button v-if="campaign.status === 'sending'" type="button" class="btn" :disabled="busy" @click="pause"><Icon name="pause" /> Pause</button>
+        <button v-if="campaign.status === 'paused'" type="button" class="btn" :disabled="busy" @click="$emit('edit')"><Icon name="edit" /> Edit content</button>
         <button v-if="campaign.status === 'paused'" type="button" class="btn primary" :disabled="busy" @click="resume"><Icon name="play" /> Resume</button>
         <button type="button" class="btn ghost danger" title="Delete campaign" aria-label="Delete campaign" :disabled="busy" @click="remove"><Icon name="trash" /></button>
       </div>
