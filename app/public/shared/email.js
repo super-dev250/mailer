@@ -95,11 +95,20 @@ export function renderEmail({ campaign, contact, settings, token = '', baseUrl =
 
   const subject = fillTags(campaign.subject, values).replace(/\s+/g, ' ').trim();
   const preheader = fillTags(campaign.preheader, values).trim();
-  const sender = [settings.sender_name, settings.postal_address]
-    .map((part) => String(part ?? '').trim().replace(/\s*\n\s*/g, ', '))
-    .filter(Boolean)
-    .map(escapeHtml)
-    .join(' &middot; ');
+  // Optional (Settings): your name and postal address, and an unsubscribe link.
+  let footer = '';
+  if (settings.footer) {
+    const sender = [settings.sender_name, settings.postal_address]
+      .map((part) => String(part ?? '').trim().replace(/\s*\n\s*/g, ', '))
+      .filter(Boolean)
+      .map(escapeHtml)
+      .join(' &middot; ');
+    const link = `<a href="${escapeHtml(unsubscribeUrl)}" style="color:#6b7280;text-decoration:underline;">${escapeHtml(settings.unsubscribe_text || 'Unsubscribe')}</a>`;
+    footer = `<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.6;color:#6b7280;">
+${sender ? `${sender}<br>` : ''}${link}
+</div>
+`;
+  }
   const pixel = token && settings.track_opens
     ? `<img src="${baseUrl}/o/${token}.gif" width="1" height="1" alt="" style="display:block;border:0;width:1px;height:1px;">`
     : '';
@@ -115,10 +124,7 @@ export function renderEmail({ campaign, contact, settings, token = '', baseUrl =
 ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(preheader)}</div>` : ''}
 <div style="max-width:600px;margin:0 auto;padding:24px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.55;color:#1f2937;">
 ${body}
-<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:12px;line-height:1.6;color:#6b7280;">
-${sender ? `${sender}<br>` : ''}<a href="${escapeHtml(unsubscribeUrl)}" style="color:#6b7280;text-decoration:underline;">${escapeHtml(settings.unsubscribe_text || 'Unsubscribe')}</a>
-</div>
-</div>
+${footer}</div>
 ${pixel}
 </body>
 </html>`;

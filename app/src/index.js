@@ -40,6 +40,7 @@ route('GET', '/api/campaigns/:id/messages', api.listMessages);
 route('POST', '/api/images', api.uploadImage);
 
 route('POST', '/api/runner/claim', runner.claim);
+route('POST', '/api/runner/match', runner.match);
 route('POST', '/api/runner/report', runner.report);
 
 function match(method, pathname) {

@@ -10,6 +10,11 @@ const PAGE_SIZE = 50;
 const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif' };
 const MAX_IMAGE_BASE64 = 1_900_000; // D1 holds at most 2 MB in one value
 
+// A contact a new campaign may email: active, never emailed before, and not already
+// waiting in another campaign. Nobody gets a campaign email twice.
+const AVAILABLE = `status = 'active' AND last_emailed_at IS NULL AND NOT EXISTS (
+  SELECT 1 FROM messages m WHERE m.contact_id = contacts.id AND m.is_test = 0 AND m.status IN ('queued', 'sending'))`;
+
 const text = (value, max) => String(value ?? '').slice(0, max);
 const whole = (value, min, max, fallback) => {
   const number = Math.round(Number(value));
@@ -26,7 +31,10 @@ export async function overview({ db, env }) {
   const [values, lists] = await Promise.all([
     getValues(db),
     db
-      .prepare(`SELECT list, COUNT(*) AS total, SUM(status = 'active') AS active FROM contacts GROUP BY list ORDER BY list`)
+      .prepare(
+        `SELECT list, COUNT(*) AS total, SUM(status = 'active') AS active, SUM(${AVAILABLE}) AS available
+         FROM contacts GROUP BY list ORDER BY list`,
+      )
       .all(),
   ]);
   return {
@@ -42,6 +50,7 @@ export async function saveSettings({ db, body }) {
   const input = await body();
   const settings = {
     sender_name: text(input.sender_name, 100).trim(),
+    footer: Boolean(input.footer),
     postal_address: text(input.postal_address, 300).trim(),
     unsubscribe_text: text(input.unsubscribe_text, 100).trim() || DEFAULT_SETTINGS.unsubscribe_text,
     batch_size: whole(input.batch_size, 1, 500, DEFAULT_SETTINGS.batch_size),
@@ -74,9 +83,12 @@ function contactFilter(query) {
     where.push('list = ?');
     args.push(query.get('list'));
   }
-  if (query.get('status')) {
+  const status = query.get('status');
+  if (status === 'new') where.push('last_emailed_at IS NULL');
+  else if (status === 'emailed') where.push('last_emailed_at IS NOT NULL');
+  else if (status) {
     where.push('status = ?');
-    args.push(query.get('status'));
+    args.push(status);
   }
   return { where: where.length ? `WHERE ${where.join(' AND ')}` : '', args };
 }
@@ -86,7 +98,10 @@ export async function listContacts({ db, url }) {
   const { limit, offset } = page(url.searchParams);
   const [rows, total] = await db.batch([
     db
-      .prepare(`SELECT id, email, name, fields, list, status, created_at FROM contacts ${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+      .prepare(
+        `SELECT id, email, name, fields, list, status, created_at, last_emailed_at
+         FROM contacts ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
+      )
       .bind(...args, limit, offset),
     db.prepare(`SELECT COUNT(*) AS n FROM contacts ${where}`).bind(...args),
   ]);
@@ -277,14 +292,14 @@ export async function deleteCampaign({ db, params }) {
   return { ok: true };
 }
 
-// Fixes the recipients: one queued message per active contact in the audience.
+// Fixes the recipients: one queued message per contact in the audience who was never emailed.
 export async function startCampaign({ db, env, params }) {
   const campaign = await loadCampaign(db, params);
   check(campaign.status === 'draft', 409, 'This campaign has already started.');
   checkSendable(campaign);
-  const audience = `status = 'active' AND (?1 = '' OR list = ?1)`;
+  const audience = `(?1 = '' OR list = ?1) AND ${AVAILABLE}`;
   const size = await db.prepare(`SELECT COUNT(*) AS n FROM contacts WHERE ${audience}`).bind(campaign.list).first('n');
-  check(size > 0, 400, 'There are no active contacts in this audience.');
+  check(size > 0, 400, 'Everyone in this audience has already been emailed, or is waiting in another campaign.');
 
   const stamp = now();
   await db.batch([

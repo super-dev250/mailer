@@ -17,12 +17,18 @@ export async function claim({ db, url, body }) {
   const values = await getValues(db);
   const settings = { ...DEFAULT_SETTINGS, ...values.settings };
 
-  const [, stuck, used, recent] = await db.batch([
-    // Never mail someone who unsubscribed, bounced or was deleted after the campaign started.
+  const [, , stuck, used, recent] = await db.batch([
+    // Never mail someone who unsubscribed, bounced or was deleted after the campaign started,
     db.prepare(
       `UPDATE messages SET status = 'skipped', error = 'Removed, unsubscribed or bounced before this email was sent'
        WHERE status = 'queued' AND is_test = 0
          AND NOT EXISTS (SELECT 1 FROM contacts c WHERE c.id = messages.contact_id AND c.status = 'active')`,
+    ),
+    // or who has been emailed by another campaign in the meantime.
+    db.prepare(
+      `UPDATE messages SET status = 'skipped', error = 'Already emailed by another campaign'
+       WHERE status = 'queued' AND is_test = 0
+         AND contact_id IN (SELECT id FROM contacts WHERE last_emailed_at IS NOT NULL)`,
     ),
     db.prepare(`SELECT id, token FROM messages WHERE status = 'sending' AND claimed_at < ? LIMIT 50`).bind(ago(STUCK_AFTER)),
     db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE status = 'sending' OR sent_at > ?`).bind(ago(DAY)),
@@ -99,6 +105,25 @@ export async function claim({ db, url, body }) {
   };
 }
 
+/**
+ * Which of these sender addresses are people a campaign emailed and who have not replied yet.
+ * Lets the runner recognise a reply that does not quote our email's Message-ID, such as a
+ * new email written to you instead of a reply.
+ */
+export async function match({ db, body }) {
+  const { emails } = await body();
+  check(Array.isArray(emails) && emails.length <= 500, 400, 'Send at most 500 addresses at a time.');
+  const { results } = await db
+    .prepare(
+      `SELECT DISTINCT email FROM messages
+       WHERE email IN (SELECT lower(value) FROM json_each(?1))
+         AND is_test = 0 AND status = 'sent' AND replied_at IS NULL AND sent_at > ?2`,
+    )
+    .bind(JSON.stringify(emails), ago(WATCH_INBOX_FOR))
+    .all();
+  return { emails: results.map((row) => row.email) };
+}
+
 // Finds the email an inbox event belongs to: by its token when known, otherwise the
 // latest email sent to that address.
 const MATCH = `SELECT id FROM messages WHERE (token = ?1 OR email = ?2) AND status IN ('sent', 'bounced')
@@ -117,6 +142,13 @@ export async function report({ db, body }) {
       statements.push(
         db
           .prepare(`UPDATE messages SET status = 'sent', sent_at = ?, error = NULL WHERE id = ? AND status = 'sending'`)
+          .bind(result.at ?? stamp, result.id),
+        // Remembered on the contact, so later campaigns leave them out even if this one is deleted.
+        db
+          .prepare(
+            `UPDATE contacts SET last_emailed_at = ?1
+             WHERE id = (SELECT contact_id FROM messages WHERE id = ?2 AND is_test = 0)`,
+          )
           .bind(result.at ?? stamp, result.id),
       );
     } else if (result.status === 'failed') {
@@ -149,15 +181,16 @@ export async function report({ db, body }) {
     const email = String(event.email ?? '').toLowerCase();
     const at = event.at ?? stamp;
     if (event.type === 'reply') {
-      // Replying implies the email arrived and was read.
+      // Replying implies the email arrived and was read. A message written before the email
+      // went out is not a reply to it.
       statements.push(
         db
           .prepare(
             `UPDATE messages SET replied_at = COALESCE(replied_at, ?3), reply_snippet = COALESCE(reply_snippet, ?4),
                opened_at = COALESCE(opened_at, ?3), delivered_at = COALESCE(delivered_at, ?3)
-             WHERE id = (${MATCH}) AND status = 'sent'`,
+             WHERE id = (${MATCH}) AND status = 'sent' AND sent_at <= ?3`,
           )
-          .bind(token, '', at, String(event.snippet ?? '').slice(0, 500)),
+          .bind(token, email, at, String(event.snippet ?? '').slice(0, 500)),
       );
     } else if (event.type === 'bounce') {
       if (event.permanent) {

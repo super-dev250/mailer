@@ -37,9 +37,11 @@ export function isCandidate(from, headers) {
 
 /**
  * @param {Buffer} source the raw message
+ * @param knownSender true when it comes from someone a campaign emailed: then it counts as
+ *   a reply even when it does not refer to our email (a new email instead of a reply)
  * @returns the event to report, or null when the message is unrelated
  */
-export async function classify(source) {
+export async function classify(source, { knownSender = false } = {}) {
   const raw = source.toString('latin1');
   const head = raw.slice(0, raw.search(/\r?\n\r?\n/)).replace(/\r?\n[ \t]+/g, ' ');
   const header = (name) => head.match(new RegExp(`^${name}:(.*)$`, 'im'))?.[1].trim() ?? '';
@@ -80,7 +82,7 @@ export async function classify(source) {
     /^(auto_reply|bulk|junk)/i.test(header('precedence'));
   if (automatic) return null;
 
-  const token = tokensIn(header('in-reply-to'))[0] ?? tokensIn(header('references')).at(-1);
-  if (!token) return null;
-  return { type: 'reply', token, at, snippet: snippet(mail.text) };
+  const token = tokensIn(header('in-reply-to'))[0] ?? tokensIn(header('references')).at(-1) ?? '';
+  if (!token && !knownSender) return null;
+  return { type: 'reply', token, email: from, at, snippet: snippet(mail.text) };
 }

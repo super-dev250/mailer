@@ -68,7 +68,7 @@ let campaignId;
 
 test('a run sends the queued emails and records each result', async () => {
   await api('PUT', '/api/settings', {
-    sender_name: 'Sam Road', postal_address: '1 Depot Way', batch_size: 10, delay_seconds: 1, daily_limit: 100, track_opens: true, track_clicks: true,
+    sender_name: 'Sam Road', footer: true, postal_address: '1 Depot Way', batch_size: 10, delay_seconds: 1, daily_limit: 100, track_opens: true, track_clicks: true,
   });
   await api('POST', '/api/contacts/import', {
     list: 'drivers',
@@ -102,7 +102,8 @@ test('a run sends the queued emails and records each result', async () => {
   });
 
   assert.deepEqual(summary, { sent: 2, failed: 1, replies: 0, bounces: 0, error: '' });
-  assert.deepEqual(inboxCalls, [{ cursor: null, stuck: [] }], 'the mailbox is checked right after the first send');
+  assert.deepEqual(inboxCalls.map(({ cursor, stuck }) => ({ cursor, stuck })), [{ cursor: null, stuck: [] }], 'the mailbox is checked right after the first send');
+  assert.deepEqual(await inboxCalls[0].matchSenders(['LEE@example.com', 'stranger@example.com']), ['lee@example.com'], 'senders are matched against the people emailed');
   assert.deepEqual(received.map((mail) => mail.to.text), ['lee@example.com', 'kim@example.com']);
 
   const [mail] = received;

@@ -120,7 +120,7 @@ export const CampaignReport = {
     });
     const resume = act(async () => {
       const { started } = await api.post(`/api/campaigns/${id}/resume`);
-      toast(started ? 'Resumed. A run is starting now.' : 'Resumed. Sending continues with the next run.');
+      toast(started ? 'Resumed. A run is starting now.' : 'Resumed. Sending continues with the next hourly run.');
       emit('changed');
     });
     const duplicate = act(async () => {

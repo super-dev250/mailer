@@ -10,9 +10,10 @@ const MAX_DOWNLOAD = 300_000; // enough for the headers, the text and a quoted o
 /**
  * @param cursor where the previous run stopped: { path, uidValidity, uid }, or null on the first run
  * @param stuck emails that were being sent when an earlier run died: [{ id, token }]
+ * @param matchSenders given sender addresses, resolves to the ones a campaign emailed
  * @returns { events, reconciled, cursor }
  */
-export async function checkInbox({ imap, user, cursor, stuck }) {
+export async function checkInbox({ imap, user, cursor, stuck, matchSenders }) {
   const client = new ImapFlow({ ...imap, logger: false });
   await client.connect();
   try {
@@ -30,6 +31,7 @@ export async function checkInbox({ imap, user, cursor, stuck }) {
 
       // No other command may run while a fetch is streaming, so collect first and download after.
       const candidates = [];
+      const senders = new Map(); // uid -> sender, for everything else
       const query = { uid: true, envelope: true, headers: ['in-reply-to', 'references', 'content-type', 'x-failed-recipients'] };
       for await (const message of client.fetch(range, query, { uid: true })) {
         last = Math.max(last, message.uid);
@@ -38,12 +40,17 @@ export async function checkInbox({ imap, user, cursor, stuck }) {
         const from = message.envelope?.from?.[0]?.address?.toLowerCase() ?? '';
         if (from === user.toLowerCase()) continue;
         if (isCandidate(from, message.headers?.toString() ?? '')) candidates.push(message.uid);
+        else if (from) senders.set(message.uid, from);
       }
 
+      // Mail from people a campaign emailed is worth a look too, even when it does not refer to our email.
+      const known = senders.size && matchSenders ? new Set(await matchSenders([...new Set(senders.values())])) : new Set();
+      const fromKnown = [...senders].filter(([, from]) => known.has(from)).map(([uid]) => uid);
+
       const events = [];
-      for (const uid of candidates) {
+      for (const uid of [...candidates, ...fromKnown]) {
         const message = await client.fetchOne(String(uid), { source: { maxLength: MAX_DOWNLOAD } }, { uid: true });
-        const event = message?.source ? await classify(message.source) : null;
+        const event = message?.source ? await classify(message.source, { knownSender: fromKnown.includes(uid) }) : null;
         if (event) events.push(event);
       }
 

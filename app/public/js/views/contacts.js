@@ -175,6 +175,8 @@ export const ContactsView = {
           <select v-model="status" aria-label="Status" style="width: auto">
             <option value="">Any status</option>
             <option v-for="(item, key) in STATUS" :key="key" :value="key">{{ item.label }}</option>
+            <option value="new">Not emailed yet</option>
+            <option value="emailed">Already emailed</option>
           </select>
           <span class="spacer"></span>
           <button v-if="list !== null" type="button" class="btn compact ghost danger" :disabled="busy" @click="removeList">Delete this list</button>
@@ -185,7 +187,7 @@ export const ContactsView = {
           <thead>
             <tr>
               <th class="narrow"><input type="checkbox" :checked="allSelected" aria-label="Select all on this page" @change="toggleAll"></th>
-              <th>Email</th><th>Name</th><th>List</th><th>Status</th><th>Added</th>
+              <th>Email</th><th>Name</th><th>List</th><th>Status</th><th>Emailed</th><th>Added</th>
             </tr>
           </thead>
           <tbody>
@@ -195,6 +197,10 @@ export const ContactsView = {
               <td>{{ row.name }}</td>
               <td>{{ row.list }}</td>
               <td><span class="badge" :class="{ ring: STATUS[row.status].ring }" :style="{ '--dot': STATUS[row.status].dot }">{{ STATUS[row.status].label }}</span></td>
+              <td class="nowrap">
+                <template v-if="row.last_emailed_at">{{ when(row.last_emailed_at) }}</template>
+                <span v-else class="muted">Not yet</span>
+              </td>
               <td class="nowrap muted">{{ when(row.created_at) }}</td>
             </tr>
           </tbody>

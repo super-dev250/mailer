@@ -40,10 +40,10 @@ export function createMailer({ user, transport }) {
         html,
         text: toText(html),
         messageId: messageId(message.token, user),
-        headers: {
-          'List-Unsubscribe': `<${unsubscribeUrl}>`,
-          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-        },
+        // With the footer on, mail apps also get the unsubscribe link, for their own unsubscribe button.
+        headers: settings.footer
+          ? { 'List-Unsubscribe': `<${unsubscribeUrl}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' }
+          : {},
       });
     },
     close: () => connection.close(),

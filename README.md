@@ -6,7 +6,7 @@ Everything runs on free services:
 
 | Part | Runs on | What it does |
 |---|---|---|
-| **Web app** | Cloudflare Workers (free plan) | Where you work: write the email, import contacts, read the results. It is also the address the emails point back to, which is how opens, clicks and unsubscribes are counted. |
+| **Web app** | Cloudflare Workers (free plan) | Where you work: write the email, import contacts, read the results. It is also the address the emails point back to, which is how opens and clicks are counted. |
 | **Mailer workflow** | GitHub Actions | Every hour, or when you start it: sends the next batch through Gmail, then reads your mailbox for replies and bounces. |
 | **Your Gmail** | Google | Emails leave from your real address, and replies arrive in your normal inbox. |
 
@@ -62,22 +62,26 @@ Add one more repository secret, `APP_URL`, with that address.
 
 ### 6. Sign in
 
-Open the address and sign in with your `APP_SECRET`. Go to **Settings** and fill in your name and postal address.
+Open the address and sign in with your `APP_SECRET`. Go to **Settings** and fill in your name.
 
 ### Optional: start runs from the app
 
-Without this step, emails go out with the next hourly run, or when you press **Run workflow** on the Mailer workflow in the Actions tab. With it, **Send test** and **Start sending** go out within a minute or two.
+Without this step, emails go out with the next hourly run, or when you press **Run workflow** on the Mailer workflow in the Actions tab. With it, **Send test**, **Start sending** and **Resume** start a run straight away, and the **Run now** button appears in the app's sidebar.
 
-1. On GitHub open **Settings > Developer settings > Personal access tokens > Fine-grained tokens** and generate a token that can access only this repository, with the repository permission **Actions: Read and write**.
-2. Add it as the repository secret `DISPATCH_TOKEN`.
-3. In the Actions tab run **Test and deploy** once more, so the app receives the token.
+1. Open <https://github.com/settings/personal-access-tokens/new> (your profile picture > **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** > **Generate new token**).
+2. Name it `mailer-dispatch`. Pick the longest expiration offered, and note the date: the app stops starting runs when it expires.
+3. **Repository access**: choose **Only select repositories** and select this repository.
+4. **Permissions**: under repository permissions set **Actions** to **Read and write**. Leave everything else as it is.
+5. **Generate token** and copy it. GitHub shows it only once.
+6. In this repository open **Settings > Secrets and variables > Actions > New repository secret**, name it `DISPATCH_TOKEN` and paste the token.
+7. In the Actions tab open **Test and deploy** and press **Run workflow**, so the app receives the token.
 
 ## Using it
 
 1. **Contacts > Import file.** Choose your Excel or CSV file. Check that the right column was recognised as the email address and give the list a name. Every other column is kept and can be used to personalise emails. Addresses you already have are skipped, so importing a file twice does no harm.
 2. **Campaigns > New campaign.** Pick the list, write the subject and the message. **Personalize** inserts fields such as the first name. `{{first_name|there}}` means "the first name, or *there* when it is missing". The image button uploads pictures, and **Button** adds a link styled as a button. The preview on the right shows the email filled in for a real contact.
 3. **Send test** sends the email to you, so you can read it in a real mailbox first.
-4. **Start sending** queues one email for every active contact on the list. From here the content is locked. To change it, duplicate the campaign.
+4. **Start sending** queues one email for every active contact on the list who has never been emailed by this app. Nobody gets a campaign email twice, so a new campaign to the same list only reaches people added since. From here the content is locked. To change it, duplicate the campaign.
 5. Open the campaign to follow the results. **Export** downloads them as a CSV file.
 
 ### What the statuses mean
@@ -92,7 +96,7 @@ Without this step, emails go out with the next hourly run, or when you press **R
 | Replied | The recipient answered | The reply in your mailbox refers to the email it answers. Out-of-office replies are ignored. |
 | Bounced | The address did not accept the email | A failure notice arrived in your mailbox. The contact is not emailed again. |
 | Not sent | Gmail refused the email, or the contact left first | The contact unsubscribed, bounced or was deleted before their turn |
-| Unsubscribed | The recipient used the unsubscribe link | They are not emailed again |
+| Unsubscribed | The recipient used the unsubscribe link, or you marked them on the Contacts page | They are not emailed again |
 
 ## Things to know
 
@@ -101,7 +105,8 @@ Without this step, emails go out with the next hourly run, or when you press **R
 - **Timing.** The workflow runs once an hour, and GitHub can start scheduled runs several minutes late. Statuses update when a run finishes. To run more often, change the `cron` line in [.github/workflows/mailer.yml](.github/workflows/mailer.yml).
 - **Actions minutes.** In a private repository each run uses about one of the 2,000 free minutes a month, so hourly runs use roughly 720. Public repositories are not charged, but GitHub switches off their scheduled workflows after 60 days without a commit.
 - **GitHub's terms.** GitHub says Actions should not be used for activity unrelated to the software in the repository, and sending marketing email from a workflow is use they could object to. If the workflow is ever disabled, `npm run runner` does the same job from any computer.
-- **The law.** The app adds an unsubscribe link and your postal address to every email, and never emails someone who unsubscribed or bounced. Whether you may email someone at all is up to you. In the United States, CAN-SPAM allows unrequested marketing email when it is honest and has those two things. The EU, the UK and Canada generally require permission first.
+- **Replies and "stop".** Replies show up after the next run, because that is when the mailbox is checked. A reply is recognised when it answers your email, and also when the person writes you a new email instead. Replies to test emails are not counted. When someone asks you to stop, select them on the **Contacts** page and press **Unsubscribe**.
+- **The law.** Emails end with your message alone by default. In the United States, CAN-SPAM asks marketing email to carry a postal address and a way to opt out: turn on **Settings > Add a footer to every email** for both. The EU, the UK and Canada generally require permission before the first email. Whether you may email someone is up to you.
 - **Another mailbox.** The workflow uses Gmail's servers by default. Any mailbox with SMTP and IMAP access works if you set `SMTP_HOST` and `IMAP_HOST` in the `env` block of the workflow file, with that mailbox's login in `GMAIL_USER` and `GMAIL_APP_PASSWORD`.
 
 ## Development

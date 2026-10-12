@@ -71,7 +71,12 @@ export async function run({ app, mailer, checkInbox, user, log = console.log, pa
   if (work.inbox.watch || summary.sent) {
     try {
       if (summary.sent) await pause(SETTLE);
-      const found = await checkInbox({ cursor: work.inbox.cursor, stuck: work.stuck });
+      const matchSenders = async (emails) => {
+        const matched = [];
+        for (const group of chunks(emails, 500)) matched.push(...(await app.match(group)).emails);
+        return matched;
+      };
+      const found = await checkInbox({ cursor: work.inbox.cursor, stuck: work.stuck, matchSenders });
       for (const group of chunks(found.reconciled, REPORT_SIZE)) await app.report({ results: group });
       for (const group of chunks(found.events, REPORT_SIZE)) await app.report({ events: group });
       summary.replies = found.events.filter((event) => event.type === 'reply').length;

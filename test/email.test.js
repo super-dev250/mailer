@@ -4,6 +4,7 @@ import { extractLinks, fieldKey, fillTags, findTags, mergeValues, renderEmail } 
 
 const settings = {
   sender_name: 'Sam Road',
+  footer: true,
   postal_address: '1 Depot Way\nAustin, TX',
   unsubscribe_text: 'Unsubscribe',
   track_opens: true,
@@ -54,6 +55,13 @@ test('a sent email carries tracking, personalisation, footer and escaped values'
   assert.match(html, /Sam Road &middot; 1 Depot Way, Austin, TX<br>/);
   assert.match(html, new RegExp(`<a href="${base}/u/${token}"[^>]*>Unsubscribe</a>`));
   assert.match(html, />A quick note<\/div>/);
+});
+
+test('without the footer the email ends with the message', () => {
+  const campaign = { subject: 'Hi', preheader: '', body_html: '<p>Bye</p>', links: [] };
+  const { html } = renderEmail({ campaign, contact, settings: { ...settings, footer: false }, token, baseUrl: base });
+  assert.doesNotMatch(html, /Unsubscribe|1 Depot Way|\/u\//);
+  assert.match(html, /<p style="margin:0 0 16px;">Bye<\/p>\n<\/div>/);
 });
 
 test('tracking can be switched off, and a preview tracks nothing', () => {

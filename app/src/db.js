@@ -1,72 +1,83 @@
-// The database creates its own tables on first use, so there is no migration step to run.
+// The database creates and upgrades its own tables on first use, so there is no migration step to run.
 
-const SCHEMA_VERSION = 1;
-
-const SCHEMA = [
-  `CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS contacts (
-    id INTEGER PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL DEFAULT '',
-    fields TEXT NOT NULL DEFAULT '{}',
-    list TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'active',
-    created_at TEXT NOT NULL
-  )`,
-  `CREATE INDEX IF NOT EXISTS contacts_list ON contacts (list, status)`,
-  `CREATE TABLE IF NOT EXISTS campaigns (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    subject TEXT NOT NULL DEFAULT '',
-    preheader TEXT NOT NULL DEFAULT '',
-    body_html TEXT NOT NULL DEFAULT '',
-    list TEXT NOT NULL DEFAULT '',
-    links TEXT NOT NULL DEFAULT '[]',
-    status TEXT NOT NULL DEFAULT 'draft',
-    created_at TEXT NOT NULL,
-    started_at TEXT,
-    finished_at TEXT
-  )`,
-  // One row per email to one recipient. `status` is how far sending got;
-  // the timestamps record what happened to the email afterwards.
-  `CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY,
-    campaign_id INTEGER NOT NULL REFERENCES campaigns (id) ON DELETE CASCADE,
-    contact_id INTEGER REFERENCES contacts (id) ON DELETE SET NULL,
-    email TEXT NOT NULL,
-    token TEXT NOT NULL UNIQUE,
-    is_test INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'queued',
-    error TEXT,
-    queued_at TEXT NOT NULL,
-    claimed_at TEXT,
-    sent_at TEXT,
-    delivered_at TEXT,
-    opened_at TEXT,
-    open_count INTEGER NOT NULL DEFAULT 0,
-    clicked_at TEXT,
-    click_count INTEGER NOT NULL DEFAULT 0,
-    replied_at TEXT,
-    reply_snippet TEXT,
-    bounced_at TEXT,
-    unsubscribed_at TEXT,
-    UNIQUE (campaign_id, contact_id)
-  )`,
-  `CREATE INDEX IF NOT EXISTS messages_status ON messages (status, sent_at)`,
-  `CREATE INDEX IF NOT EXISTS messages_email ON messages (email)`,
-  `CREATE TABLE IF NOT EXISTS images (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    data TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  )`,
+// Each entry upgrades the database by one version. Only ever add to the end.
+export const MIGRATIONS = [
+  // 1: the original tables.
+  [
+    `CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS contacts (
+      id INTEGER PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT '',
+      fields TEXT NOT NULL DEFAULT '{}',
+      list TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS contacts_list ON contacts (list, status)`,
+    `CREATE TABLE IF NOT EXISTS campaigns (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      subject TEXT NOT NULL DEFAULT '',
+      preheader TEXT NOT NULL DEFAULT '',
+      body_html TEXT NOT NULL DEFAULT '',
+      list TEXT NOT NULL DEFAULT '',
+      links TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT
+    )`,
+    // One row per email to one recipient. `status` is how far sending got;
+    // the timestamps record what happened to the email afterwards.
+    `CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY,
+      campaign_id INTEGER NOT NULL REFERENCES campaigns (id) ON DELETE CASCADE,
+      contact_id INTEGER REFERENCES contacts (id) ON DELETE SET NULL,
+      email TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      is_test INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'queued',
+      error TEXT,
+      queued_at TEXT NOT NULL,
+      claimed_at TEXT,
+      sent_at TEXT,
+      delivered_at TEXT,
+      opened_at TEXT,
+      open_count INTEGER NOT NULL DEFAULT 0,
+      clicked_at TEXT,
+      click_count INTEGER NOT NULL DEFAULT 0,
+      replied_at TEXT,
+      reply_snippet TEXT,
+      bounced_at TEXT,
+      unsubscribed_at TEXT,
+      UNIQUE (campaign_id, contact_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS messages_status ON messages (status, sent_at)`,
+    `CREATE INDEX IF NOT EXISTS messages_email ON messages (email)`,
+    `CREATE TABLE IF NOT EXISTS images (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+  ],
+  // 2: remember who has been emailed, so nobody gets a campaign email twice.
+  [
+    'ALTER TABLE contacts ADD COLUMN last_emailed_at TEXT',
+    `UPDATE contacts SET last_emailed_at = (
+       SELECT MAX(sent_at) FROM messages m WHERE m.contact_id = contacts.id AND m.is_test = 0 AND m.status IN ('sent', 'bounced'))`,
+    'CREATE INDEX IF NOT EXISTS messages_contact ON messages (contact_id, status)',
+  ],
 ];
 
 export const DEFAULT_SETTINGS = {
   sender_name: '',
+  // Off: the email ends with the message, like a personal email.
+  footer: false,
   postal_address: '',
   unsubscribe_text: 'Unsubscribe',
   batch_size: 25,
@@ -96,13 +107,24 @@ export function setValue(db, key, value) {
     .bind(key, JSON.stringify(value));
 }
 
-async function migrate(db) {
-  const version = await db
+async function schemaVersion(db) {
+  const value = await db
     .prepare(`SELECT value FROM settings WHERE key = 'schema_version'`)
     .first('value')
     .catch(() => null);
-  if (Number(version) === SCHEMA_VERSION) return;
-  await db.batch([...SCHEMA.map((sql) => db.prepare(sql)), setValue(db, 'schema_version', SCHEMA_VERSION)]);
+  return Number(value) || 0;
+}
+
+async function migrate(db) {
+  const version = await schemaVersion(db);
+  if (version >= MIGRATIONS.length) return;
+  const statements = MIGRATIONS.slice(version).flat().map((sql) => db.prepare(sql));
+  try {
+    await db.batch([...statements, setValue(db, 'schema_version', MIGRATIONS.length)]);
+  } catch (error) {
+    // Another Worker instance may have upgraded the database at the same moment.
+    if ((await schemaVersion(db)) < MIGRATIONS.length) throw error;
+  }
 }
 
 let migrated;

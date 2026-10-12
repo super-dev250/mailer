@@ -61,7 +61,7 @@ test('importing contacts skips invalid and existing addresses', async () => {
     { email: body.rows[0].email, name: body.rows[0].name, fields: body.rows[0].fields, list: body.rows[0].list },
     { email: 'ann@example.com', name: 'Ann Lee', fields: { truck_make: 'Volvo' }, list: 'drivers' },
   );
-  assert.deepEqual((await get('/api/overview')).body.lists, [{ list: 'drivers', total: 5, active: 5 }]);
+  assert.deepEqual((await get('/api/overview')).body.lists, [{ list: 'drivers', total: 5, active: 5, available: 5 }]);
 });
 
 test('a draft can be edited and its links are indexed', async () => {
@@ -79,7 +79,7 @@ test('a campaign without content or contacts cannot start', async () => {
   await call('PUT', `/api/campaigns/${empty}`, { subject: 'Hi', body_html: '<p>Hi</p>', list: 'nobody' });
   const started = await post(`/api/campaigns/${empty}/start`);
   assert.equal(started.status, 400);
-  assert.match(started.body.error, /no active contacts/);
+  assert.match(started.body.error, /already been emailed/);
   assert.equal((await call('DELETE', `/api/campaigns/${empty}`)).status, 200);
 });
 
@@ -245,4 +245,32 @@ test('uploaded images are served publicly', async () => {
   assert.equal(image.headers.get('Content-Type'), 'image/png');
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), Buffer.from(png, 'base64'));
   assert.equal((await server.fetch(`/img/${'0'.repeat(24)}.png`)).status, 404);
+});
+
+test('nobody is emailed twice, and a reply is recognised by its sender', async () => {
+  // Ann and Bo were emailed, Cy's email failed, Di was deleted and Ed unsubscribed: only Cy is left.
+  assert.equal((await get('/api/overview')).body.lists[0].available, 1);
+  const second = (await post('/api/campaigns')).body.id;
+  await call('PUT', `/api/campaigns/${second}`, { name: 'Second', subject: 'Hi', body_html: '<p>Hi</p>', list: 'drivers' });
+  assert.deepEqual((await post(`/api/campaigns/${second}/start`)).body, { queued: 1, started: false });
+
+  const [cy] = (await post('/api/runner/claim')).body.messages;
+  assert.equal(cy.to, 'cy@example.com');
+  await post('/api/runner/report', { results: [{ id: cy.id, status: 'sent', at: minutesAgo(10) }] });
+
+  const emailed = (await get('/api/contacts?status=emailed')).body.rows.map((row) => row.email);
+  assert.deepEqual(emailed.sort(), ['ann@example.com', 'bo@example.com', 'cy@example.com']);
+  assert.deepEqual((await get('/api/contacts?status=new')).body.rows.map((row) => row.email), ['ed@example.com']);
+
+  const third = (await post('/api/campaigns')).body.id;
+  await call('PUT', `/api/campaigns/${third}`, { name: 'Third', subject: 'Hi', body_html: '<p>Hi</p>', list: 'drivers' });
+  const refused = await post(`/api/campaigns/${third}/start`);
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /already been emailed/);
+
+  // A new email from Cy, not quoting ours, still counts as a reply.
+  assert.deepEqual((await post('/api/runner/match', { emails: ['CY@example.com', 'stranger@example.com'] })).body, { emails: ['cy@example.com'] });
+  await post('/api/runner/report', { events: [{ type: 'reply', token: '', email: 'cy@example.com', at: minutesAgo(1), snippet: 'Tell me more' }] });
+  assert.equal((await get(`/api/campaigns/${second}`)).body.stats.replied, 1);
+  assert.deepEqual((await post('/api/runner/match', { emails: ['cy@example.com'] })).body, { emails: [] }, 'already replied');
 });

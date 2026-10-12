@@ -63,9 +63,12 @@ export const CampaignEditor = {
 
     // ---- Audience and personalisation ----
     const lists = computed(() => store.overview.lists.filter((item) => item.list));
+    // Only contacts who were never emailed: nobody gets a campaign email twice.
     const audienceSize = computed(() =>
-      store.overview.lists.filter((item) => !form.list || item.list === form.list).reduce((sum, item) => sum + item.active, 0),
+      store.overview.lists.filter((item) => !form.list || item.list === form.list).reduce((sum, item) => sum + item.available, 0),
     );
+    // Without DISPATCH_TOKEN the app cannot start a run itself.
+    const waitHint = ' It goes out with the next hourly run. To send it now, press Run workflow on the Mailer workflow in GitHub.';
     // The preview and the test email are filled in with a real contact from the audience.
     const sample = ref(SAMPLE);
     async function loadSample(list) {
@@ -149,13 +152,13 @@ export const CampaignEditor = {
         const { started } = await api.post(`/api/campaigns/${id}/test`, { email: testEmail.value });
         remember('mailer.test', testEmail.value.trim());
         dialog.value = '';
-        toast(started ? 'Test queued. The run is starting, so it should arrive in a minute or two.' : 'Test queued. It goes out with the next run.');
+        toast(started ? 'Test queued. The run is starting, so it should arrive in a minute or two.' : `Test queued.${waitHint}`);
       });
 
     const start = () =>
       act(async () => {
         const { queued, started } = await api.post(`/api/campaigns/${id}/start`);
-        toast(`Campaign started: ${plural(queued, 'email')} queued.${started ? ' The first run is starting now.' : ''}`);
+        toast(`Campaign started: ${plural(queued, 'email')} queued.${started ? ' The first run is starting now.' : waitHint}`);
         emit('started');
       });
 
@@ -208,7 +211,7 @@ export const CampaignEditor = {
               <option value="">All contacts</option>
               <option v-for="item in lists" :key="item.list" :value="item.list">{{ item.list }}</option>
             </select>
-            <span class="hint">{{ plural(audienceSize, 'active contact') }}</span>
+            <span class="hint">{{ plural(audienceSize, 'contact') }} to email. Anyone already emailed, or waiting in another campaign, is left out.</span>
           </div>
         </div>
         <div class="field">
@@ -232,7 +235,7 @@ export const CampaignEditor = {
             <button type="button" class="btn compact" @click="openButtonDialog"><Icon name="plus" /> Button</button>
           </div>
           <RichEditor ref="editor" v-model="form.body_html" @uploading="uploading = $event" />
-          <span class="hint">Your name, postal address and an unsubscribe link are added below the message automatically.</span>
+          <span v-if="settings.footer" class="hint">Your postal address and an unsubscribe link are added below the message.</span>
         </div>
         <div v-if="unknownTags.length" class="notice problem">
           <Icon name="alert" />
@@ -281,11 +284,15 @@ export const CampaignEditor = {
     </Modal>
 
     <Modal v-if="dialog === 'start'" title="Start sending?" @close="dialog = ''">
-      <p>This sends <b>{{ preview.subject || 'this email' }}</b> to <b>{{ plural(audienceSize, 'active contact') }}</b> in {{ form.list || 'all your lists' }}. The content cannot be changed afterwards.</p>
-      <p class="muted">{{ pace }} You can pause at any time.</p>
-      <div v-if="!settings.postal_address || !settings.sender_name" class="notice">
+      <p>This sends <b>{{ preview.subject || 'this email' }}</b> to <b>{{ plural(audienceSize, 'contact') }}</b> in {{ form.list || 'all your lists' }}. The content cannot be changed afterwards.</p>
+      <p v-if="audienceSize" class="muted">{{ pace }} You can pause at any time.</p>
+      <div v-if="!settings.sender_name" class="notice">
         <Icon name="info" />
-        <span>Your sender name or postal address is missing. Marketing email rules such as CAN-SPAM require a postal address in every email. <a href="#/settings">Add them in Settings</a>.</span>
+        <span>Your name is not set, so the email shows only your address as the sender. <a href="#/settings">Add it in Settings</a>.</span>
+      </div>
+      <div v-if="!audienceSize" class="notice problem">
+        <Icon name="alert" />
+        <span>Everyone in this audience has already been emailed or is waiting in another campaign.</span>
       </div>
       <template #foot>
         <button type="button" class="btn" @click="dialog = ''">Cancel</button>

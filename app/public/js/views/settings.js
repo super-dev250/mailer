@@ -51,16 +51,24 @@ export const SettingsView = {
             <template v-if="store.overview.sender_email">Emails go out from <b>{{ store.overview.sender_email }}</b>, the mailbox set in the GMAIL_USER secret.</template>
           </span>
         </div>
-        <div class="field">
-          <label for="postal-address">Postal address</label>
-          <textarea id="postal-address" v-model="form.postal_address" rows="2" maxlength="300" placeholder="1 Depot Way, Austin, TX 78701"></textarea>
-          <span class="hint">Printed in the footer of every email. Marketing email rules such as CAN-SPAM require one.</span>
-        </div>
-        <div class="field">
-          <label for="unsubscribe-text">Unsubscribe link text</label>
-          <input id="unsubscribe-text" type="text" v-model="form.unsubscribe_text" maxlength="100">
-          <span class="hint">Every email ends with this link. People who use it are never emailed again.</span>
-        </div>
+        <label class="check">
+          <input type="checkbox" v-model="form.footer">
+          <span>
+            <b>Add a footer to every email</b><br>
+            <span class="muted">Off: the email ends with your message, like a personal email. On: a small footer with your postal address and an unsubscribe link, which US marketing rules (CAN-SPAM) ask for.</span>
+          </span>
+        </label>
+        <template v-if="form.footer">
+          <div class="field">
+            <label for="postal-address">Postal address</label>
+            <textarea id="postal-address" v-model="form.postal_address" rows="2" maxlength="300" placeholder="1 Depot Way, Austin, TX 78701"></textarea>
+          </div>
+          <div class="field">
+            <label for="unsubscribe-text">Unsubscribe link text</label>
+            <input id="unsubscribe-text" type="text" v-model="form.unsubscribe_text" maxlength="100">
+            <span class="hint">People who use the link are never emailed again.</span>
+          </div>
+        </template>
       </div>
 
       <div class="card pad stack">

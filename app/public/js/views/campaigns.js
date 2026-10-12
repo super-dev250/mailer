@@ -16,7 +16,7 @@ export const CampaignsView = {
 
     // Shown until the first campaign exists.
     const steps = computed(() => [
-      { label: 'Add your sender name and address', done: Boolean(store.overview.settings.sender_name), href: '#/settings' },
+      { label: 'Add your name', done: Boolean(store.overview.settings.sender_name), href: '#/settings' },
       { label: 'Import your contacts', done: store.overview.lists.length > 0, href: '#/contacts' },
       { label: 'Write your first campaign', done: campaigns.value.length > 0 },
     ]);

@@ -59,6 +59,7 @@ test('a reply is matched through the Message-ID it answers', async () => {
   assert.deepEqual(await classify(reply([], quoted)), {
     type: 'reply',
     token: SENT,
+    email: 'lee@example.com',
     at: '2026-10-05T15:14:00.000Z',
     snippet: 'Sounds good, send me the link.',
   });
@@ -99,6 +100,15 @@ test('delay notices, automatic replies and unrelated mail are ignored', async ()
   assert.equal(await classify(reply(['Precedence: auto_reply'])), null);
   assert.equal(await classify(message(['From: friend@example.com', 'Subject: Re: lunch', 'In-Reply-To: <x@example.com>', '', 'Sure'])), null);
   assert.notEqual(await classify(reply(['Auto-Submitted: no'])), null);
+});
+
+test('a new email from someone who was emailed counts as a reply', async () => {
+  const fresh = message(['From: Lee Carter <lee@example.com>', 'Subject: About your app', 'Date: Tue, 6 Oct 2026 09:00:00 +0000', '', 'Is it free?']);
+  assert.equal(await classify(fresh), null, 'a stranger writing in is not a reply');
+  assert.deepEqual(await classify(fresh, { knownSender: true }), {
+    type: 'reply', token: '', email: 'lee@example.com', at: '2026-10-06T09:00:00.000Z', snippet: 'Is it free?',
+  });
+  assert.equal(await classify(reply(['Auto-Submitted: auto-replied']), { knownSender: true }), null, 'automatic answers still are not');
 });
 
 test('only messages that could matter are downloaded', () => {
