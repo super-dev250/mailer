@@ -1,6 +1,6 @@
 // Finds public contact details on GitHub: given a search query, looks through commit history
 // for the name and email people committed with, alongside their GitHub login and profile URL.
-// Needs the optional GITHUB_API_TOKEN secret, because GitHub only allows commit search when signed in.
+// Needs the optional GH_API_TOKEN secret, because GitHub only allows commit search when signed in.
 
 import { cleanEmail } from '../public/shared/email.js';
 import { check, HttpError } from './http.js';
@@ -13,10 +13,10 @@ const SVN_UUID = /@[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 const PER_PAGE = 100;
 const MAX_PAGE = 10; // GitHub's search API returns at most 1000 results for one query: 10 pages of 100.
 
-export const canScrape = (env) => Boolean(env.GITHUB_API_TOKEN);
+export const canScrape = (env) => Boolean(env.GH_API_TOKEN);
 
 export async function search({ env, body }) {
-  check(canScrape(env), 400, 'Finding GitHub contacts needs the optional GITHUB_API_TOKEN secret. See the README.');
+  check(canScrape(env), 400, 'Finding GitHub contacts needs the optional GH_API_TOKEN secret. See the README.');
   const input = await body();
   const query = String(input.query ?? '').trim();
   check(query, 400, 'Enter a search query.');
@@ -26,7 +26,7 @@ export async function search({ env, body }) {
     `https://api.github.com/search/commits?q=${encodeURIComponent(query)}&per_page=${PER_PAGE}&page=${page}`,
     {
       headers: {
-        Authorization: `Bearer ${env.GITHUB_API_TOKEN}`,
+        Authorization: `Bearer ${env.GH_API_TOKEN}`,
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'mailer',
@@ -34,7 +34,7 @@ export async function search({ env, body }) {
     },
   );
   if (response.status === 422) throw new HttpError(400, 'GitHub did not understand that search query.');
-  if (response.status === 401) throw new HttpError(400, 'GITHUB_API_TOKEN was rejected by GitHub. Check the secret.');
+  if (response.status === 401) throw new HttpError(400, 'GH_API_TOKEN was rejected by GitHub. Check the secret.');
   if (response.status === 403 || response.status === 429) {
     // GitHub says how long to back off for, either directly or as when its rate-limit window resets.
     const retryAfter = Number(response.headers.get('retry-after'));

@@ -84,7 +84,7 @@ The **GitHub contacts** page works through the entire public commit history on G
 2. Name it `mailer-scraper`. Pick the longest expiration offered, and note the date: the app stops searching when it expires.
 3. **Repository access**: **Public Repositories (read-only)** is enough; no other permissions are needed.
 4. **Generate token** and copy it. GitHub shows it only once.
-5. In this repository open **Settings > Secrets and variables > Actions > New repository secret**, name it `GITHUB_API_TOKEN` and paste the token.
+5. In this repository open **Settings > Secrets and variables > Actions > New repository secret**, name it `GH_API_TOKEN` and paste the token.
 6. In the Actions tab open **Test and deploy** and press **Run workflow**, so the app receives the token.
 
 Press **Start** and it goes through GitHub's commit history from 1990 to today, a date range at a time, automatically splitting a range further whenever more than 1000 commits fall inside it (GitHub never returns more than that for one search). It keeps going, including while you visit other pages in the app, until it has gone through all of history or you press **Stop**; either way, what it has found so far is kept. Because GitHub allows only a handful of these searches per minute, going through all of history can take a long time. **Export CSV** downloads the list, and **Add to contacts** adds everyone found to a list of your choice.
