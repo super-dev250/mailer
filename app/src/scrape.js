@@ -40,6 +40,10 @@ const ALLOWED_DOMAINS = new RegExp(
     ')$',
   'i',
 );
+// Some tools (anonymizers, migration scripts, bots) generate placeholder addresses using a long
+// hash or token as the local part — e.g. "user.480d270fe8f46b...@gmail.com" — on a real provider
+// domain, but nobody reads it. A run of 24+ hex characters is never something a person typed.
+const LOOKS_GENERATED = /[0-9a-f]{24,}/i;
 const PER_PAGE = 100;
 const MAX_PAGE = 10; // GitHub's search API returns at most 1000 results for one query: 10 pages of 100.
 
@@ -79,7 +83,7 @@ export async function search({ env, body }) {
   const rows = [];
   for (const item of data.items ?? []) {
     const email = cleanEmail(item.commit?.author?.email);
-    if (!email || !ALLOWED_DOMAINS.test(email) || seen.has(email)) continue;
+    if (!email || !ALLOWED_DOMAINS.test(email) || LOOKS_GENERATED.test(email.split('@')[0]) || seen.has(email)) continue;
     seen.add(email);
     rows.push({
       name: String(item.commit?.author?.name ?? '').trim(),
