@@ -13,6 +13,19 @@ const STATUS = {
   unsubscribed: { label: 'Unsubscribed', dot: 'var(--stage-queued)', ring: true },
   bounced: { label: 'Bounced', dot: 'var(--critical)' },
 };
+const CSV_COLUMNS = ['Email', 'Name', 'List', 'Status', 'Added', 'Last emailed', 'Fields'];
+
+// A name or field written by someone else: a leading = + - or @ would run as a formula in a spreadsheet.
+function csvCell(value) {
+  const text = String(value ?? '');
+  return `"${(/^[=+\-@]/.test(text) ? `'${text}` : text).replaceAll('"', '""')}"`;
+}
+function contactCsvRow(row) {
+  const fields = Object.entries(row.fields ?? {})
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(' · ');
+  return [row.email, row.name, row.list, row.status, row.created_at, row.last_emailed_at ?? '', fields];
+}
 
 export const ContactsView = {
   setup() {
@@ -100,6 +113,24 @@ export const ContactsView = {
       status.value = '';
       await Promise.all([loadRows(), refreshOverview()]);
     });
+    const exportCsv = act(async () => {
+      // Whatever the current search/list/status filters show, not necessarily every contact.
+      const query = new URLSearchParams({ limit: 500, offset: 0 });
+      if (search.value.trim()) query.set('q', search.value.trim());
+      if (list.value !== null) query.set('list', list.value);
+      if (status.value) query.set('status', status.value);
+      const lines = [CSV_COLUMNS.map(csvCell).join(',')];
+      for (let start = 0; ; start += 500) {
+        query.set('offset', start);
+        const page = await api.get(`/api/contacts?${query}`);
+        for (const row of page.rows) lines.push(contactCsvRow(row).map(csvCell).join(','));
+        if (start + 500 >= page.total) break;
+      }
+      // The leading mark makes Excel read the file as UTF-8.
+      const url = URL.createObjectURL(new Blob(['﻿', lines.join('\r\n')], { type: 'text/csv' }));
+      Object.assign(document.createElement('a'), { href: url, download: 'contacts.csv' }).click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
 
     // ---- Dialogs ----
     const dialog = ref('');
@@ -179,7 +210,7 @@ export const ContactsView = {
 
     return {
       PAGE_SIZE, STATUS, store, rows, total, search, list, status, offset, selected, busy, totalContacts, allSelected, toggle, toggleAll,
-      setStatus, removeSelected, removeList, removeAll, dialog, fresh, addContact, table, columns, listName, dragging, progress, result, parsed, existing, newContacts,
+      setStatus, removeSelected, removeList, removeAll, exportCsv, dialog, fresh, addContact, table, columns, listName, dragging, progress, result, parsed, existing, newContacts,
       openImport, readFile, onDrop, runImport, count, plural, when,
     };
   },
@@ -189,6 +220,7 @@ export const ContactsView = {
       <span class="muted">{{ count(totalContacts) }}</span>
       <div class="actions">
         <button v-if="totalContacts" type="button" class="btn ghost danger" :disabled="busy" @click="removeAll"><Icon name="trash" /> Delete all</button>
+        <button v-if="totalContacts" type="button" class="btn" :disabled="busy" @click="exportCsv"><Icon name="download" /> Export CSV</button>
         <button type="button" class="btn" @click="dialog = 'add'"><Icon name="plus" /> Add contact</button>
         <button type="button" class="btn primary" @click="openImport"><Icon name="upload" /> Import file</button>
       </div>

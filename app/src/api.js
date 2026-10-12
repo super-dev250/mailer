@@ -310,6 +310,25 @@ export async function getCampaign({ db, params }) {
   };
 }
 
+// Clicks per link, not just in total: how many times, and by how many distinct recipients.
+export async function campaignLinkStats({ db, params }) {
+  const campaign = await loadCampaign(db, params);
+  const { results } = await db
+    .prepare(
+      `SELECT link_index, COUNT(*) AS clicks, COUNT(DISTINCT message_id) AS clickers
+       FROM link_clicks WHERE campaign_id = ? GROUP BY link_index`,
+    )
+    .bind(campaign.id)
+    .all();
+  const byIndex = new Map(results.map((row) => [row.link_index, row]));
+  const links = JSON.parse(campaign.links).map((url, index) => ({
+    url,
+    clicks: byIndex.get(index)?.clicks ?? 0,
+    clickers: byIndex.get(index)?.clickers ?? 0,
+  }));
+  return { links };
+}
+
 export async function updateCampaign({ db, params, body }) {
   const campaign = await loadCampaign(db, params);
   check(campaign.status === 'draft', 409, LOCKED);

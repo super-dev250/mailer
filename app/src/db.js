@@ -91,6 +91,19 @@ export const MIGRATIONS = [
       PRIMARY KEY (attachment_id, part)
     )`,
   ],
+  // 4: which link in a campaign was clicked, not just that some link was: `messages.click_count`
+  // only ever counted clicks in aggregate, with no record of which of a campaign's several links
+  // they were on, so a report could not break clicks down per link.
+  [
+    `CREATE TABLE IF NOT EXISTS link_clicks (
+      id INTEGER PRIMARY KEY,
+      campaign_id INTEGER NOT NULL REFERENCES campaigns (id) ON DELETE CASCADE,
+      message_id INTEGER NOT NULL REFERENCES messages (id) ON DELETE CASCADE,
+      link_index INTEGER NOT NULL,
+      clicked_at TEXT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS link_clicks_campaign ON link_clicks (campaign_id, link_index)',
+  ],
 ];
 
 export const DEFAULT_SETTINGS = {

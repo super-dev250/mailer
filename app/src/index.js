@@ -39,6 +39,7 @@ route('POST', '/api/campaigns/:id/pause', api.pauseCampaign);
 route('POST', '/api/campaigns/:id/resume', api.resumeCampaign);
 route('POST', '/api/campaigns/:id/test', api.testCampaign);
 route('GET', '/api/campaigns/:id/messages', api.listMessages);
+route('GET', '/api/campaigns/:id/links', api.campaignLinkStats);
 route('POST', '/api/campaigns/:id/attachments', api.addAttachment);
 route('PUT', '/api/attachments/:id/parts/:part', api.uploadPart);
 route('DELETE', '/api/attachments/:id', api.deleteAttachment);

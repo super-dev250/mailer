@@ -54,6 +54,15 @@ export const CampaignReport = {
       total.value = data.total;
     }
     const reload = () => loadRows().catch(problem);
+
+    // Which link (not just that some link) was clicked, for campaigns that have more than one.
+    const linkStats = ref([]);
+    async function loadLinks() {
+      if (!props.campaign.links.length) return;
+      const data = await api.get(`/api/campaigns/${id}/links`);
+      linkStats.value = data.links.slice().sort((a, b) => b.clicks - a.clicks);
+    }
+    onMounted(() => loadLinks().catch(problem));
     const fromStart = () => (offset.value === 0 ? reload() : (offset.value = 0));
     let searchTimer;
     watch(filter, fromStart);
@@ -67,6 +76,7 @@ export const CampaignReport = {
     function refresh() {
       emit('changed');
       reload();
+      loadLinks().catch(problem);
     }
     // While emails are going out, keep the numbers current. Hidden tabs do not ask.
     const refreshTimer = setInterval(() => {
@@ -94,6 +104,23 @@ export const CampaignReport = {
           hint: `${count(stats[key])} of ${count(whole)}`,
         };
       });
+    });
+    // What the funnel numbers mean as rates, not just counts: e.g. 40 opens reads very differently
+    // out of 50 delivered than out of 5,000.
+    const rateTiles = computed(() => {
+      const stats = props.stats;
+      const rate = (key, label, part, whole, dot) => {
+        const ratio = whole ? part / whole : 0;
+        return { key, label, dot, value: whole ? percent(part, whole) : '–', note: `${count(part)} of ${count(whole)}`, width: `${ratio ? Math.max(2, ratio * 100) : 0}%` };
+      };
+      return [
+        rate('delivery', 'Delivery rate', stats.delivered, stats.sent, STAGES.delivered.dot),
+        rate('open', 'Open rate', stats.opened, stats.delivered, STAGES.opened.dot),
+        rate('click', 'Click rate', stats.clicked, stats.delivered, STAGES.clicked.dot),
+        rate('reply', 'Reply rate', stats.replied, stats.delivered, STAGES.replied.dot),
+        rate('bounce', 'Bounce rate', stats.bounced, stats.sent, 'var(--critical)'),
+        rate('unsub', 'Unsubscribe rate', stats.unsubscribed, stats.sent, 'var(--stage-queued)'),
+      ];
     });
     const bounceWarning = computed(() => props.stats.bounced >= 3 && props.stats.bounced / props.stats.sent > 0.05);
     // There is no way to see whether mail landed in spam — nobody can check another person's spam
@@ -167,7 +194,7 @@ export const CampaignReport = {
     const detail = (row) => row.reply_snippet || (row.status === 'sent' ? '' : row.error) || '';
 
     return {
-      FILTERS, PAGE_SIZE, CAMPAIGN_STATUS, filter, search, offset, rows, total, busy, tiles, bounceWarning, openWarning, email,
+      FILTERS, PAGE_SIZE, CAMPAIGN_STATUS, filter, search, offset, rows, total, busy, tiles, rateTiles, linkStats, bounceWarning, openWarning, email,
       refresh, pause, resume, duplicate, remove, exportCsv, badge, detail, audienceName, count, percent, when,
       viewEmail: () => viewEmail().catch(problem),
     };
@@ -210,6 +237,32 @@ export const CampaignReport = {
           <div class="tile-value">{{ count(tile.value) }}</div>
           <div class="tile-note">{{ tile.note }}</div>
           <div class="meter" :title="tile.hint"><i :style="{ width: tile.width }"></i></div>
+        </div>
+      </div>
+
+      <div class="tiles">
+        <div v-for="tile in rateTiles" :key="tile.key" class="tile" :style="{ '--dot': tile.dot }">
+          <div class="tile-label">{{ tile.label }}</div>
+          <div class="tile-value">{{ tile.value }}</div>
+          <div class="tile-note">{{ tile.note }}</div>
+          <div class="meter"><i :style="{ width: tile.width }"></i></div>
+        </div>
+      </div>
+
+      <div v-if="campaign.links.length" class="card pad stack">
+        <h2>Links</h2>
+        <p v-if="!linkStats.some((link) => link.clicks)" class="muted">No clicks yet.</p>
+        <div v-else class="table-wrap">
+          <table>
+            <thead><tr><th>Link</th><th>Clicks</th><th>Unique clickers</th></tr></thead>
+            <tbody>
+              <tr v-for="link in linkStats" :key="link.url">
+                <td class="cell-title"><a :href="link.url" target="_blank" rel="noopener">{{ link.url }}</a></td>
+                <td>{{ count(link.clicks) }}</td>
+                <td>{{ count(link.clickers) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 

@@ -31,22 +31,29 @@ export async function click({ db, params, waitUntil }) {
   const gone = new Response('This link is no longer available.', { status: 404 });
   if (!TOKEN.test(params.token)) return gone;
   const row = await db
-    .prepare('SELECT m.id, c.links FROM messages m JOIN campaigns c ON c.id = m.campaign_id WHERE m.token = ?')
+    .prepare('SELECT m.id, c.id AS campaign_id, c.links FROM messages m JOIN campaigns c ON c.id = m.campaign_id WHERE m.token = ?')
     .bind(params.token)
     .first();
-  const target = row && JSON.parse(row.links)[Number(params.index)];
+  const index = Number(params.index);
+  const target = row && JSON.parse(row.links)[index];
   if (!target || !URL.canParse(target)) return gone;
 
   // Someone who clicked has also seen the email, even if their mail client blocked the pixel.
   waitUntil(
     db
-      .prepare(
-        `UPDATE messages SET click_count = click_count + 1, clicked_at = COALESCE(clicked_at, ?1),
-           opened_at = COALESCE(opened_at, ?1), delivered_at = COALESCE(delivered_at, ?1)
-         WHERE id = ?2 AND status = 'sent'`,
-      )
-      .bind(now(), row.id)
-      .run()
+      .batch([
+        db
+          .prepare(
+            `UPDATE messages SET click_count = click_count + 1, clicked_at = COALESCE(clicked_at, ?1),
+               opened_at = COALESCE(opened_at, ?1), delivered_at = COALESCE(delivered_at, ?1)
+             WHERE id = ?2 AND status = 'sent'`,
+          )
+          .bind(now(), row.id),
+        // Which link, not just that some link was clicked, so a report can break clicks down per link.
+        db
+          .prepare('INSERT INTO link_clicks (campaign_id, message_id, link_index, clicked_at) VALUES (?, ?, ?, ?)')
+          .bind(row.campaign_id, row.id, index, now()),
+      ])
       .catch(console.error),
   );
   return Response.redirect(target, 302);
