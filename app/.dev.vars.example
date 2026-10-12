@@ -3,4 +3,4 @@
 APP_SECRET=local-dev-secret-change-me
 
 # Optional: lets the GitHub contacts page search commits. See the README.
-# GITHUB_API_TOKEN=
+# GH_API_TOKEN=

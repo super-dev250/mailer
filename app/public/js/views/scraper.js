@@ -151,7 +151,7 @@ async function run() {
     if (state.done && state.totalFound === 0) {
       // GitHub reporting zero commits across the whole of history means something went wrong
       // talking to it, not that the search genuinely found nothing.
-      problem(new Error('GitHub reported no commits at all, which usually means a problem talking to it rather than an empty result. Check GITHUB_API_TOKEN and try again.'));
+      problem(new Error('GitHub reported no commits at all, which usually means a problem talking to it rather than an empty result. Check GH_API_TOKEN and try again.'));
     }
   } catch (error) {
     problem(error);
@@ -227,7 +227,7 @@ export const ScraperView = {
 
     <div v-if="!store.overview.scraper.can_scrape" class="card empty">
       <h2>Not set up yet</h2>
-      <p>Finding GitHub contacts needs the optional <code>GITHUB_API_TOKEN</code> secret. See the README.</p>
+      <p>Finding GitHub contacts needs the optional <code>GH_API_TOKEN</code> secret. See the README.</p>
     </div>
     <template v-else>
       <div class="card pad">
