@@ -35,6 +35,8 @@ const secrets = {
   GITHUB_REPO: env.GITHUB_REPOSITORY,
   GITHUB_BRANCH: env.GITHUB_BRANCH,
   DISPATCH_TOKEN: env.DISPATCH_TOKEN?.trim(),
+  // Lets the GitHub contacts page search commits.
+  GH_API_TOKEN: env.GH_API_TOKEN?.trim(),
 };
 const folder = mkdtempSync(join(tmpdir(), 'mailer-'));
 const secretsFile = join(folder, 'secrets.json');
