@@ -88,6 +88,16 @@ export const SettingsView = {
           </div>
         </div>
         <p class="muted">{{ pace }} Gmail itself stops a personal account at about 500 a day, and a slow, steady pace is what keeps a mailbox in good standing.</p>
+        <div class="notice">
+          <Icon name="info" />
+          <span>
+            <b>A safe pace for a mailbox with no sending history</b> (true for most Gmail accounts, and especially for email addresses found rather than collected with consent):
+            start around <b>20&ndash;40 emails a day</b>, in small batches of <b>3&ndash;5 per run</b> spread across the day rather than sent all at once,
+            with at least <b>30&ndash;60 seconds</b> between individual emails. After a week or two without bounces or complaints, raise the daily total gradually
+            &mdash; doubling it every week or so (e.g. 40 &rarr; 75 &rarr; 150) &mdash; rather than jumping straight to a high number. Going from 0 to hundreds a day
+            overnight is the single most common reason a new mailbox lands in spam.
+          </span>
+        </div>
       </div>
 
       <div class="card pad stack">

@@ -96,6 +96,15 @@ export const CampaignReport = {
       });
     });
     const bounceWarning = computed(() => props.stats.bounced >= 3 && props.stats.bounced / props.stats.sent > 0.05);
+    // There is no way to see whether mail landed in spam — nobody can check another person's spam
+    // folder. But delivered-with-almost-no-opens, well after sending, is the signature of it: the
+    // mailbox accepted the email (so it did not bounce), yet almost nobody is seeing it.
+    const openWarning = computed(() => {
+      const stats = props.stats;
+      if (!store.overview.settings.track_opens || stats.delivered < 10 || !props.campaign.started_at) return false;
+      const hoursSinceStart = (Date.now() - new Date(props.campaign.started_at).getTime()) / 3_600_000;
+      return hoursSinceStart >= 24 && stats.opened / stats.delivered < 0.05;
+    });
 
     // The email is shown filled in for one real contact from the audience.
     const email = ref(null);
@@ -158,7 +167,7 @@ export const CampaignReport = {
     const detail = (row) => row.reply_snippet || (row.status === 'sent' ? '' : row.error) || '';
 
     return {
-      FILTERS, PAGE_SIZE, CAMPAIGN_STATUS, filter, search, offset, rows, total, busy, tiles, bounceWarning, email,
+      FILTERS, PAGE_SIZE, CAMPAIGN_STATUS, filter, search, offset, rows, total, busy, tiles, bounceWarning, openWarning, email,
       refresh, pause, resume, duplicate, remove, exportCsv, badge, detail, audienceName, count, percent, when,
       viewEmail: () => viewEmail().catch(problem),
     };
@@ -184,6 +193,15 @@ export const CampaignReport = {
       <div v-if="bounceWarning" class="notice problem">
         <Icon name="alert" />
         <span><b>{{ percent(stats.bounced, stats.sent) }} of these emails bounced.</b> A high bounce rate can get a mailbox restricted. Check where this list came from before sending to it again.</span>
+      </div>
+
+      <div v-if="openWarning" class="notice">
+        <Icon name="info" />
+        <span>
+          <b>Only {{ percent(stats.opened, stats.delivered) }} of delivered emails have been opened.</b>
+          Nobody can see another person's spam folder, but delivered-with-almost-no-opens like this is its usual signature.
+          <a href="#/settings">Slow down the sending pace</a>, and double-check this list is people who would recognize and expect this email.
+        </span>
       </div>
 
       <div class="tiles">

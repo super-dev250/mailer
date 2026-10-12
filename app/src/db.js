@@ -99,9 +99,12 @@ export const DEFAULT_SETTINGS = {
   footer: false,
   postal_address: '',
   unsubscribe_text: 'Unsubscribe',
-  batch_size: 25,
-  delay_seconds: 5,
-  daily_limit: 100,
+  // A cautious starting pace for a mailbox with no sending history: spread across the day rather
+  // than front-loaded into the first couple of runs, and well under Gmail's own 500-a-day cap.
+  // See the Settings page for how to raise this gradually as the mailbox earns a reputation.
+  batch_size: 4,
+  delay_seconds: 40,
+  daily_limit: 40,
   track_opens: true,
   track_clicks: true,
 };

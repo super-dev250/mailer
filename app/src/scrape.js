@@ -47,6 +47,66 @@ const LOOKS_GENERATED = /[0-9a-f]{24,}/i;
 const PER_PAGE = 100;
 const MAX_PAGE = 10; // GitHub's search API returns at most 1000 results for one query: 10 pages of 100.
 
+// An email address carries no country information at all, so this is the only signal available:
+// the free-text "location" a person optionally typed into their own GitHub profile. It is often
+// blank, sometimes made up, and never verified by GitHub, so this can only ever be a best-effort
+// filter, not a reliable one. A profile with no location, or one this list fails to recognise,
+// is kept, not excluded — most GitHub profiles never set a location at all.
+const EXCLUDED_LOCATIONS = new RegExp(
+  '\\b(' +
+    [
+      'asia',
+      'africa',
+      // Asia
+      'afghanistan', 'armenia', 'azerbaijan', 'bahrain', 'bangladesh', 'bhutan', 'brunei', 'cambodia', 'china',
+      'cyprus', 'georgia', 'india', 'indonesia', 'iran', 'iraq', 'israel', 'japan', 'jordan', 'kazakhstan',
+      'kuwait', 'kyrgyzstan', 'laos', 'lebanon', 'malaysia', 'maldives', 'mongolia', 'myanmar', 'burma', 'nepal',
+      'north korea', 'oman', 'pakistan', 'palestine', 'philippines', 'qatar', 'saudi arabia', 'singapore',
+      'south korea', '\\bkorea\\b', 'sri lanka', 'syria', 'taiwan', 'tajikistan', 'thailand', 'timor-leste',
+      'turkey', 'turkiye', 'turkmenistan', 'u\\.?a\\.?e\\.?', 'united arab emirates', 'uzbekistan', 'vietnam',
+      'yemen', 'hong kong', 'macau',
+      // Africa
+      'algeria', 'angola', 'benin', 'botswana', 'burkina faso', 'burundi', 'cabo verde', 'cape verde', 'cameroon',
+      'central african republic', 'chad', 'comoros', 'congo', 'djibouti', 'egypt', 'equatorial guinea', 'eritrea',
+      'eswatini', 'swaziland', 'ethiopia', 'gabon', 'gambia', 'ghana', 'guinea-bissau', 'guinea', "cote d'ivoire",
+      "c\\u00f4te d'ivoire", 'ivory coast', 'kenya', 'lesotho', 'liberia', 'libya', 'madagascar', 'malawi', 'mali',
+      'mauritania', 'mauritius', 'morocco', 'mozambique', 'namibia', 'niger', 'nigeria', 'rwanda', 'sao tome',
+      'senegal', 'seychelles', 'sierra leone', 'somalia', 'south africa', 'south sudan', 'sudan', 'tanzania',
+      'togo', 'tunisia', 'uganda', 'zambia', 'zimbabwe',
+    ].join('|') +
+    ')\\b',
+  'i',
+);
+// One Worker invocation gets a limited number of outgoing requests; this leaves headroom for the
+// search request itself plus a safety margin, so a page with unusually many distinct authors
+// degrades to "not all of them checked" instead of failing outright.
+const MAX_LOCATION_LOOKUPS = 40;
+
+async function excludedLocations(env, logins) {
+  const unique = [...new Set(logins)].slice(0, MAX_LOCATION_LOOKUPS);
+  const excluded = new Set();
+  await Promise.all(
+    unique.map(async (login) => {
+      try {
+        const response = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, {
+          headers: {
+            Authorization: `Bearer ${env.GH_API_TOKEN}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            'User-Agent': 'mailer',
+          },
+        });
+        if (!response.ok) return; // unknown: kept, not excluded
+        const { location } = await response.json();
+        if (location && EXCLUDED_LOCATIONS.test(location)) excluded.add(login);
+      } catch {
+        // Unknown: kept, not excluded.
+      }
+    }),
+  );
+  return excluded;
+}
+
 export const canScrape = (env) => Boolean(env.GH_API_TOKEN);
 
 export async function search({ env, body }) {
@@ -80,7 +140,7 @@ export async function search({ env, body }) {
   const data = await response.json();
 
   const seen = new Set();
-  const rows = [];
+  let rows = [];
   for (const item of data.items ?? []) {
     const email = cleanEmail(item.commit?.author?.email);
     if (!email || !ALLOWED_DOMAINS.test(email) || LOOKS_GENERATED.test(email.split('@')[0]) || seen.has(email)) continue;
@@ -92,6 +152,8 @@ export async function search({ env, body }) {
       url: item.author?.html_url ?? '',
     });
   }
+  const excluded = await excludedLocations(env, rows.filter((row) => row.login).map((row) => row.login));
+  if (excluded.size) rows = rows.filter((row) => !excluded.has(row.login));
   // GitHub reports the true match count here even though it only lets us page through the first
   // 1000: that is how the caller knows a query needs to be split into narrower ones to get the rest.
   const total = data.total_count ?? 0;
