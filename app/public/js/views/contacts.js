@@ -105,6 +105,30 @@ export const ContactsView = {
     const result = ref(null);
     const parsed = computed(() => (table.value ? toContacts(table.value, columns) : null));
 
+    // Addresses from the file that are contacts already. They are looked up as soon as the email
+    // column is known, shown, and left out of the import. Nobody is added twice.
+    const existing = ref(null); // a Set once checked
+    let lookup = 0;
+    watch(parsed, async (value) => {
+      existing.value = null;
+      if (!value) return;
+      const current = ++lookup;
+      const found = new Set();
+      const emails = value.contacts.map((contact) => contact.email);
+      try {
+        for (let start = 0; start < emails.length; start += 1000) {
+          const answer = await api.post('/api/contacts/existing', { emails: emails.slice(start, start + 1000) });
+          answer.existing.forEach((email) => found.add(email));
+        }
+      } catch (error) {
+        problem(error); // the import still leaves out existing addresses on the server
+      }
+      if (current === lookup) existing.value = found;
+    });
+    const newContacts = computed(() =>
+      parsed.value && existing.value ? parsed.value.contacts.filter((contact) => !existing.value.has(contact.email)) : [],
+    );
+
     function openImport() {
       table.value = null;
       result.value = null;
@@ -124,7 +148,7 @@ export const ContactsView = {
       readFile(event.dataTransfer.files[0]);
     }
     const runImport = act(async () => {
-      const { contacts } = parsed.value;
+      const contacts = newContacts.value;
       const totals = { added: 0, existing: 0, invalid: 0 };
       progress.value = 0;
       for (let start = 0; start < contacts.length; start += CHUNK) {
@@ -138,7 +162,7 @@ export const ContactsView = {
 
     return {
       PAGE_SIZE, STATUS, store, rows, total, search, list, status, offset, selected, busy, totalContacts, allSelected, toggle, toggleAll,
-      setStatus, removeSelected, removeList, dialog, fresh, addContact, table, columns, listName, dragging, progress, result, parsed,
+      setStatus, removeSelected, removeList, dialog, fresh, addContact, table, columns, listName, dragging, progress, result, parsed, existing, newContacts,
       openImport, readFile, onDrop, runImport, count, plural, when,
     };
   },
@@ -254,15 +278,17 @@ export const ContactsView = {
             <input id="list-name" type="text" v-model="listName" maxlength="100">
           </div>
         </div>
-        <p>
-          <b>{{ plural(parsed.contacts.length, 'contact') }}</b> to import<template v-if="parsed.invalid"> · {{ plural(parsed.invalid, 'row') }} without a valid email</template><template v-if="parsed.repeated"> · {{ plural(parsed.repeated, 'repeat') }} left out</template>.
+        <p v-if="!existing" class="muted">Checking which of these addresses you already have…</p>
+        <p v-else>
+          <b>{{ plural(newContacts.length, 'new contact') }}</b> to import<template v-if="existing.size"> · {{ plural(existing.size, 'address', 'addresses') }} already in your contacts, left out</template><template v-if="parsed.repeated"> · {{ plural(parsed.repeated, 'repeat') }} in the file, left out</template><template v-if="parsed.invalid"> · {{ plural(parsed.invalid, 'row') }} without a valid email</template>.
           The other columns are kept so you can use them to personalize emails.
         </p>
-        <div class="card table-wrap">
+        <div v-if="existing && !newContacts.length" class="notice"><Icon name="info" /><span>Everyone in this file is already in your contacts.</span></div>
+        <div v-else-if="existing" class="card table-wrap">
           <table>
             <thead><tr><th>Email</th><th>Name</th><th>Other fields</th></tr></thead>
             <tbody>
-              <tr v-for="contact in parsed.contacts.slice(0, 5)" :key="contact.email">
+              <tr v-for="contact in newContacts.slice(0, 5)" :key="contact.email">
                 <td class="cell-title">{{ contact.email }}</td>
                 <td class="nowrap">{{ contact.name }}</td>
                 <td class="muted small">{{ Object.entries(contact.fields).map(([key, value]) => key + ': ' + value).join(' · ') }}</td>
@@ -270,7 +296,7 @@ export const ContactsView = {
             </tbody>
           </table>
         </div>
-        <p v-if="progress !== null" class="muted">Importing… {{ count(progress) }} of {{ count(parsed.contacts.length) }}</p>
+        <p v-if="progress !== null" class="muted">Importing… {{ count(progress) }} of {{ count(newContacts.length) }}</p>
       </template>
 
       <template v-else>
@@ -280,8 +306,8 @@ export const ContactsView = {
 
       <template #foot>
         <button type="button" class="btn" @click="dialog = ''">{{ result ? 'Done' : 'Cancel' }}</button>
-        <button v-if="table && !result" type="button" class="btn primary" :disabled="busy || !parsed.contacts.length || !listName.trim()" @click="runImport">
-          Import {{ plural(parsed.contacts.length, 'contact') }}
+        <button v-if="table && !result" type="button" class="btn primary" :disabled="busy || !existing || !newContacts.length || !listName.trim()" @click="runImport">
+          Import {{ plural(newContacts.length, 'new contact') }}
         </button>
       </template>
     </Modal>`,

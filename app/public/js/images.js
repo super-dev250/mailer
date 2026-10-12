@@ -15,11 +15,11 @@ function dataUrlToBlob(dataUrl) {
   return new Blob([bytes], { type });
 }
 
-const blobToBase64 = (blob) =>
+export const blobToBase64 = (blob) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result.slice(reader.result.indexOf(',') + 1));
-    reader.onerror = () => reject(new Error('Could not read the image.'));
+    reader.onerror = () => reject(new Error('Could not read the file.'));
     reader.readAsDataURL(blob);
   });
 

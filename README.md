@@ -78,8 +78,8 @@ Without this step, emails go out with the next hourly run, or when you press **R
 
 ## Using it
 
-1. **Contacts > Import file.** Choose your Excel or CSV file. Check that the right column was recognised as the email address and give the list a name. Every other column is kept and can be used to personalise emails. Addresses you already have are skipped, so importing a file twice does no harm.
-2. **Campaigns > New campaign.** Pick the list, write the subject and the message. **Personalize** inserts fields such as the first name. `{{first_name|there}}` means "the first name, or *there* when it is missing". The image button uploads pictures, and **Button** adds a link styled as a button. The preview on the right shows the email filled in for a real contact.
+1. **Contacts > Import file.** Choose your Excel or CSV file. Check that the right column was recognised as the email address and give the list a name. Every other column is kept and can be used to personalise emails. Each address exists only once in your contacts: before you import, the screen shows which addresses you already have, and those are left out. Capital letters, invisible characters copied from a web page, or a form like `Lee Carter <lee@example.com>` do not make an address count as new. Adding a contact by hand follows the same rule.
+2. **Campaigns > New campaign.** Pick the list, write the subject and the message. **Personalize** inserts fields such as the first name. `{{first_name|there}}` means "the first name, or *there* when it is missing". The image button uploads pictures, and **Button** adds a link styled as a button. **Attach files** adds files that every email carries: up to 5 files, 10 MB in all. Gmail refuses some types, such as `.apk` app installers and `.exe` programs; for those, put the file online and link to it. The preview on the right shows the email filled in for a real contact.
 3. **Send test** sends the email to you, so you can read it in a real mailbox first.
 4. **Start sending** queues one email for every active contact on the list who has never been emailed by this app. Nobody gets a campaign email twice, so a new campaign to the same list only reaches people added since. From here the content is locked. To change it, duplicate the campaign.
 5. Open the campaign to follow the results. **Export** downloads them as a CSV file.
@@ -100,6 +100,7 @@ Without this step, emails go out with the next hourly run, or when you press **R
 
 ## Things to know
 
+- **Attachments and spam filters.** A file attached to a first email from someone the reader does not know makes spam filters more careful. When a link to the file would do, it is the safer choice.
 - **Opens are an estimate.** Apple Mail loads images by itself, which counts as an open. Mail apps that block images hide real opens. Looking at your own sent copy in Gmail counts too. Replies and clicks are reliable.
 - **Gmail's limits.** A personal Gmail account can send to about 500 recipients a day, and Google restricts accounts that send a lot of unwanted email. The defaults are 25 emails per run and 100 per day. Change them under **Settings > Sending pace**, and raise them slowly.
 - **Timing.** The workflow runs once an hour, and GitHub can start scheduled runs several minutes late. Statuses update when a run finishes. To run more often, change the `cron` line in [.github/workflows/mailer.yml](.github/workflows/mailer.yml).

@@ -24,6 +24,7 @@ route('POST', '/api/run', api.runNow);
 
 route('GET', '/api/contacts', api.listContacts);
 route('POST', '/api/contacts/import', api.importContacts);
+route('POST', '/api/contacts/existing', api.existingContacts);
 route('POST', '/api/contacts/delete', api.deleteContacts);
 route('POST', '/api/contacts/status', api.setContactStatus);
 
@@ -37,10 +38,14 @@ route('POST', '/api/campaigns/:id/pause', api.pauseCampaign);
 route('POST', '/api/campaigns/:id/resume', api.resumeCampaign);
 route('POST', '/api/campaigns/:id/test', api.testCampaign);
 route('GET', '/api/campaigns/:id/messages', api.listMessages);
+route('POST', '/api/campaigns/:id/attachments', api.addAttachment);
+route('PUT', '/api/attachments/:id/parts/:part', api.uploadPart);
+route('DELETE', '/api/attachments/:id', api.deleteAttachment);
 route('POST', '/api/images', api.uploadImage);
 
 route('POST', '/api/runner/claim', runner.claim);
 route('POST', '/api/runner/match', runner.match);
+route('POST', '/api/runner/part', runner.part);
 route('POST', '/api/runner/report', runner.report);
 
 function match(method, pathname) {

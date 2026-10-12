@@ -26,8 +26,8 @@ export const CampaignView = {
   },
   template: `
     <template v-if="data">
-      <CampaignEditor v-if="data.campaign.status === 'draft'" :campaign="data.campaign" @started="load" />
-      <CampaignReport v-else :campaign="data.campaign" :stats="data.stats" @changed="load" />
+      <CampaignEditor v-if="data.campaign.status === 'draft'" :campaign="data.campaign" :attachments="data.attachments" @started="load" />
+      <CampaignReport v-else :campaign="data.campaign" :attachments="data.attachments" :stats="data.stats" @changed="load" />
     </template>
     <div v-else-if="missing" class="empty">
       <h2>This campaign could not be opened</h2>

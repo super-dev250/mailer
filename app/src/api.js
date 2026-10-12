@@ -1,11 +1,11 @@
 // Everything the web app calls. All of it requires the app secret.
 
-import { extractLinks, fieldKey } from '../public/shared/email.js';
+import { PART_BYTES, attachmentProblem, partsFor } from '../public/shared/attachments.js';
+import { cleanEmail, extractLinks, fieldKey } from '../public/shared/email.js';
 import { check } from './http.js';
 import { DEFAULT_SETTINGS, getValues, now, setValue } from './db.js';
 import { canDispatch, dispatch } from './github.js';
 
-const EMAIL = /^[^\s@,;<>()]+@[^\s@,;<>()]+\.[^\s@,;<>()]+$/;
 const PAGE_SIZE = 50;
 const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif' };
 const MAX_IMAGE_BASE64 = 1_900_000; // D1 holds at most 2 MB in one value
@@ -127,8 +127,8 @@ export async function importContacts({ db, body }) {
   check(Array.isArray(rows) && rows.length <= 1000, 400, 'Send at most 1000 contacts at a time.');
   const valid = [];
   for (const row of rows) {
-    const email = text(row?.email, 254).trim().toLowerCase();
-    if (EMAIL.test(email)) valid.push({ email, name: text(row.name, 200).trim(), fields: cleanFields(row.fields) });
+    const email = cleanEmail(text(row?.email, 300));
+    if (email && email.length <= 254) valid.push({ email, name: text(row.name, 200).trim(), fields: cleanFields(row.fields) });
   }
   let added = 0;
   if (valid.length) {
@@ -142,6 +142,17 @@ export async function importContacts({ db, body }) {
     added = result.meta.changes;
   }
   return { added, existing: valid.length - added, invalid: rows.length - valid.length };
+}
+
+/** Which of these addresses are contacts already. The import screen leaves them out before importing. */
+export async function existingContacts({ db, body }) {
+  const { emails } = await body();
+  check(Array.isArray(emails) && emails.length <= 1000, 400, 'Check at most 1000 addresses at a time.');
+  const { results } = await db
+    .prepare('SELECT email FROM contacts WHERE email IN (SELECT value FROM json_each(?))')
+    .bind(JSON.stringify(emails.map(cleanEmail).filter(Boolean)))
+    .all();
+  return { existing: results.map((row) => row.email) };
 }
 
 function contactSelection(input) {
@@ -204,11 +215,14 @@ const NO_STATS = counts({
 const hasInlineImage = (html) => /src\s*=\s*["'](data|blob):/i.test(html);
 const isBlank = (html) => !html.replace(/<(?!img\b)[^>]*>|&nbsp;|\s/g, '');
 
-function campaignId(params) {
-  const id = Number(params.id);
-  check(Number.isInteger(id), 404, 'Campaign not found.');
+const LOCKED = 'This campaign has started, so its content is locked. Duplicate it to change it.';
+
+function idOf(value, what) {
+  const id = Number(value);
+  check(Number.isInteger(id), 404, `${what} not found.`);
   return id;
 }
+const campaignId = (params) => idOf(params.id, 'Campaign');
 
 async function loadCampaign(db, params) {
   const campaign = await db.prepare('SELECT * FROM campaigns WHERE id = ?').bind(campaignId(params)).first();
@@ -216,10 +230,25 @@ async function loadCampaign(db, params) {
   return campaign;
 }
 
-function checkSendable(campaign) {
+// A campaign's attached files. A file is complete once all of its parts are stored.
+async function loadAttachments(db, id) {
+  const { results } = await db
+    .prepare(
+      `SELECT a.id, a.name, a.type, a.size, a.parts,
+         (SELECT COUNT(*) FROM attachment_parts p WHERE p.attachment_id = a.id) AS stored
+       FROM attachments a WHERE a.campaign_id = ? ORDER BY a.id`,
+    )
+    .bind(id)
+    .all();
+  return results.map(({ stored, ...file }) => ({ ...file, complete: stored === file.parts }));
+}
+
+async function checkSendable(db, campaign) {
   check(campaign.subject.trim(), 400, 'Add a subject line first.');
   check(!isBlank(campaign.body_html), 400, 'The email has no content yet.');
   check(!hasInlineImage(campaign.body_html), 400, 'An image is still uploading. Wait a moment and try again.');
+  const files = await loadAttachments(db, campaign.id);
+  check(files.every((file) => file.complete), 400, 'An attachment did not finish uploading. Remove it and attach it again.');
 }
 
 export async function listCampaigns({ db }) {
@@ -251,6 +280,17 @@ export async function createCampaign({ db, body }) {
       now(),
     )
     .first();
+  // A copy carries the same files. The parts are copied inside the database.
+  for (const file of source ? await loadAttachments(db, source.id) : []) {
+    const copy = await db
+      .prepare('INSERT INTO attachments (campaign_id, name, type, size, parts, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id')
+      .bind(row.id, file.name, file.type, file.size, file.parts, now())
+      .first();
+    await db
+      .prepare('INSERT INTO attachment_parts (attachment_id, part, data) SELECT ?, part, data FROM attachment_parts WHERE attachment_id = ?')
+      .bind(copy.id, file.id)
+      .run();
+  }
   return { id: row.id };
 }
 
@@ -260,12 +300,16 @@ export async function getCampaign({ db, params }) {
     .prepare(`SELECT ${STATS} FROM messages WHERE campaign_id = ? AND is_test = 0`)
     .bind(campaign.id)
     .first();
-  return { campaign: { ...campaign, links: JSON.parse(campaign.links) }, stats: counts(stats) };
+  return {
+    campaign: { ...campaign, links: JSON.parse(campaign.links) },
+    attachments: await loadAttachments(db, campaign.id),
+    stats: counts(stats),
+  };
 }
 
 export async function updateCampaign({ db, params, body }) {
   const campaign = await loadCampaign(db, params);
-  check(campaign.status === 'draft', 409, 'This campaign has started, so its content is locked. Duplicate it to change it.');
+  check(campaign.status === 'draft', 409, LOCKED);
   const input = await body();
   const html = text(input.body_html, 500_000);
   await db
@@ -287,6 +331,8 @@ export async function deleteCampaign({ db, params }) {
   const id = campaignId(params);
   await db.batch([
     db.prepare('DELETE FROM messages WHERE campaign_id = ?').bind(id),
+    db.prepare('DELETE FROM attachment_parts WHERE attachment_id IN (SELECT id FROM attachments WHERE campaign_id = ?)').bind(id),
+    db.prepare('DELETE FROM attachments WHERE campaign_id = ?').bind(id),
     db.prepare('DELETE FROM campaigns WHERE id = ?').bind(id),
   ]);
   return { ok: true };
@@ -296,7 +342,7 @@ export async function deleteCampaign({ db, params }) {
 export async function startCampaign({ db, env, params }) {
   const campaign = await loadCampaign(db, params);
   check(campaign.status === 'draft', 409, 'This campaign has already started.');
-  checkSendable(campaign);
+  await checkSendable(db, campaign);
   const audience = `(?1 = '' OR list = ?1) AND ${AVAILABLE}`;
   const size = await db.prepare(`SELECT COUNT(*) AS n FROM contacts WHERE ${audience}`).bind(campaign.list).first('n');
   check(size > 0, 400, 'Everyone in this audience has already been emailed, or is waiting in another campaign.');
@@ -328,9 +374,9 @@ export const resumeCampaign = changeStatus('paused', 'sending');
 // A test goes through exactly the same path as a real email, to one address, outside the statistics.
 export async function testCampaign({ db, env, params, body }) {
   const campaign = await loadCampaign(db, params);
-  const email = text((await body()).email, 254).trim().toLowerCase();
-  check(EMAIL.test(email), 400, 'Enter a valid email address for the test.');
-  checkSendable(campaign);
+  const email = cleanEmail(text((await body()).email, 300));
+  check(email, 400, 'Enter a valid email address for the test.');
+  await checkSendable(db, campaign);
   await db
     .prepare(
       `INSERT INTO messages (campaign_id, email, token, is_test, queued_at)
@@ -364,6 +410,60 @@ export async function listMessages({ db, params, url }) {
     db.prepare(`SELECT COUNT(*) AS n FROM messages m WHERE ${where.join(' AND ')}`).bind(...args),
   ]);
   return { rows: rows.results, total: total.results[0].n };
+}
+
+// ---- Attachments ----
+
+// Registers a file. Its content follows in parts (uploadPart), because one database value holds
+// at most 2 MB. The browser encodes the parts, so the Worker only stores text.
+export async function addAttachment({ db, params, body }) {
+  const campaign = await loadCampaign(db, params);
+  check(campaign.status === 'draft', 409, LOCKED);
+  const input = await body();
+  // The file's own name only: no folders, control characters or quotes.
+  const name = text(input.name, 200).replace(/^.*[\\/]/, '').replace(/[\p{Cc}"]/gu, '').trim();
+  const size = Number(input.size);
+  check(name && Number.isInteger(size), 400, 'The file needs a name and a size.');
+  const problem = attachmentProblem(name, size, await loadAttachments(db, campaign.id));
+  check(!problem, 400, problem);
+  const type = /^[\w.+-]+\/[\w.+-]+$/.test(input.type ?? '') ? input.type : 'application/octet-stream';
+  const row = await db
+    .prepare('INSERT INTO attachments (campaign_id, name, type, size, parts, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id, parts')
+    .bind(campaign.id, name, type, size, partsFor(size), now())
+    .first();
+  return { id: row.id, parts: row.parts };
+}
+
+async function loadAttachment(db, params) {
+  const file = await db
+    .prepare('SELECT a.id, a.parts, c.status FROM attachments a JOIN campaigns c ON c.id = a.campaign_id WHERE a.id = ?')
+    .bind(idOf(params.id, 'Attachment'))
+    .first();
+  check(file, 404, 'Attachment not found.');
+  check(file.status === 'draft', 409, LOCKED);
+  return file;
+}
+
+export async function uploadPart({ db, params, body }) {
+  const file = await loadAttachment(db, params);
+  const part = Number(params.part);
+  check(Number.isInteger(part) && part >= 0 && part < file.parts, 400, 'That part does not belong to the file.');
+  const { data } = await body();
+  check(typeof data === 'string' && data.length > 0 && data.length <= Math.ceil(PART_BYTES / 3) * 4, 400, 'That part is not valid.');
+  await db
+    .prepare('INSERT OR REPLACE INTO attachment_parts (attachment_id, part, data) VALUES (?, ?, ?)')
+    .bind(file.id, part, data)
+    .run();
+  return { ok: true };
+}
+
+export async function deleteAttachment({ db, params }) {
+  const file = await loadAttachment(db, params);
+  await db.batch([
+    db.prepare('DELETE FROM attachment_parts WHERE attachment_id = ?').bind(file.id),
+    db.prepare('DELETE FROM attachments WHERE id = ?').bind(file.id),
+  ]);
+  return { ok: true };
 }
 
 // ---- Images ----

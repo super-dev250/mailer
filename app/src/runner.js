@@ -55,16 +55,26 @@ export async function claim({ db, url, body }) {
   const campaigns = {};
   const contacts = new Map();
   if (claimed.length) {
-    const [campaignRows, contactRows] = await db.batch([
+    const [campaignRows, contactRows, fileRows] = await db.batch([
       db
         .prepare('SELECT id, subject, preheader, body_html, links, list FROM campaigns WHERE id IN (SELECT value FROM json_each(?))')
         .bind(idsOf(claimed, 'campaign_id')),
       db
         .prepare('SELECT id, email, name, fields FROM contacts WHERE id IN (SELECT value FROM json_each(?))')
         .bind(idsOf(claimed, 'contact_id')),
+      // Only files whose upload finished. The runner fetches their content part by part.
+      db
+        .prepare(
+          `SELECT a.id, a.campaign_id, a.name, a.type, a.size, a.parts FROM attachments a
+           WHERE a.campaign_id IN (SELECT value FROM json_each(?))
+             AND (SELECT COUNT(*) FROM attachment_parts p WHERE p.attachment_id = a.id) = a.parts
+           ORDER BY a.id`,
+        )
+        .bind(idsOf(claimed, 'campaign_id')),
     ]);
-    for (const row of campaignRows.results) campaigns[row.id] = { ...row, links: JSON.parse(row.links) };
+    for (const row of campaignRows.results) campaigns[row.id] = { ...row, links: JSON.parse(row.links), attachments: [] };
     for (const row of contactRows.results) contacts.set(row.id, { ...row, fields: JSON.parse(row.fields) });
+    for (const { campaign_id, ...file } of fileRows.results) campaigns[campaign_id].attachments.push(file);
   }
 
   // A test is addressed to you but filled in with a real contact from the audience:
@@ -103,6 +113,15 @@ export async function claim({ db, url, body }) {
     stuck: stuck.results,
     inbox: { watch: recent.results.length > 0 || stuck.results.length > 0, cursor: values.inbox_cursor ?? null },
   };
+}
+
+/** One stored part of an attached file, base64-encoded. */
+export async function part({ db, body }) {
+  const { id, part: index } = await body();
+  check(Number.isInteger(id) && Number.isInteger(index), 400, 'Give the attachment id and the part number.');
+  const row = await db.prepare('SELECT data FROM attachment_parts WHERE attachment_id = ? AND part = ?').bind(id, index).first();
+  check(row, 404, 'That part of the attachment is missing.');
+  return { data: row.data };
 }
 
 /**

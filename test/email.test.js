@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractLinks, fieldKey, fillTags, findTags, mergeValues, renderEmail } from '../app/public/shared/email.js';
+import { cleanEmail, extractLinks, fieldKey, fillTags, findTags, mergeValues, renderEmail } from '../app/public/shared/email.js';
 
 const settings = {
   sender_name: 'Sam Road',
@@ -20,6 +20,13 @@ test('merge tags use contact fields, a derived first name and fallbacks', () => 
   assert.equal(fillTags('Hi {{first_name|there}},', mergeValues({ email: 'x@example.com' })), 'Hi there,');
   assert.equal(fillTags('[{{missing}}]', values), '[]');
   assert.deepEqual(findTags('{{first_name|there}} {{truck}} {{first_name}}'), ['first_name', 'truck']);
+});
+
+test('one address written different ways is cleaned to the same form', () => {
+  const same = ['lee@example.com', ' LEE@Example.com ', 'Lee Carter <lee@example.com>', 'mailto:lee@example.com', 'lee@example.com.', 'lee\u200B@example.com\uFEFF'];
+  assert.deepEqual([...new Set(same.map(cleanEmail))], ['lee@example.com']);
+  assert.equal(cleanEmail('no address here'), '');
+  assert.equal(cleanEmail(undefined), '');
 });
 
 test('column names become merge tag names', () => {

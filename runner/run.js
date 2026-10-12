@@ -7,6 +7,17 @@ const SETTLE = 20_000; // a bounce for a wrong address comes back within seconds
 const REPORT_SIZE = 20;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+// Rebuilds each file from the parts the app stores it in, ready to attach.
+async function fetchFiles(app, attachments) {
+  const files = [];
+  for (const file of attachments) {
+    const parts = [];
+    for (let part = 0; part < file.parts; part++) parts.push(Buffer.from((await app.part(file.id, part)).data, 'base64'));
+    files.push({ filename: file.name, content: Buffer.concat(parts), contentType: file.type });
+  }
+  return files;
+}
 const chunks = (items, size) =>
   Array.from({ length: Math.ceil(items.length / size) }, (_, i) => items.slice(i * size, (i + 1) * size));
 
@@ -25,7 +36,15 @@ export async function run({ app, mailer, checkInbox, user, log = console.log, pa
   const queue = [...work.messages];
   log(`${queue.length} email(s) to send.`);
   try {
-    while (queue.length && Date.now() - startedAt < TIME_BUDGET) {
+    // Attached files are fetched once per run and reused for every email of their campaign.
+    // Without them nothing is sent, and the emails go back to the queue below.
+    for (const campaign of queue.length ? Object.values(work.campaigns) : []) {
+      campaign.files = await fetchFiles(app, campaign.attachments ?? []).catch((error) => {
+        summary.error = `Could not fetch the attachments, so nothing was sent: ${error.message}`;
+        return [];
+      });
+    }
+    while (queue.length && !summary.error && Date.now() - startedAt < TIME_BUDGET) {
       const message = queue[0];
       let failure = null;
       try {

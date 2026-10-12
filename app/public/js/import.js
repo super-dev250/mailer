@@ -1,10 +1,7 @@
 // Turns an Excel or CSV file into contacts. Runs entirely in the browser.
 
-import { fieldKey } from '/shared/email.js';
+import { cleanEmail, fieldKey } from '/shared/email.js';
 import { loadScript } from './load.js';
-
-// Also finds the address inside cells such as "Lee Carter <lee@example.com>".
-const EMAIL = /[^\s@,;<>()"']+@[^\s@,;<>()"']+\.[^\s@,;<>()"']+/;
 
 /** Reads the first sheet of a file into { headers, lines }, every cell as trimmed text. */
 export async function readTable(file) {
@@ -19,7 +16,7 @@ export async function readTable(file) {
   if (!grid.length) throw new Error('That file has no rows.');
 
   // A first row with no email address in it is a header row.
-  const hasHeader = !grid[0].some((cell) => EMAIL.test(cell));
+  const hasHeader = !grid[0].some((cell) => cleanEmail(cell));
   const width = grid.reduce((max, line) => Math.max(max, line.length), 0);
   const headers = Array.from({ length: width }, (_, i) => (hasHeader && grid[0][i]) || `Column ${i + 1}`);
   return { headers, lines: hasHeader ? grid.slice(1) : grid };
@@ -28,7 +25,7 @@ export async function readTable(file) {
 /** Best guess at which columns hold the email address and the name. -1 means none. */
 export function guessColumns({ headers, lines }) {
   const sample = lines.slice(0, 50);
-  const hits = headers.map((_, i) => sample.filter((line) => EMAIL.test(line[i] ?? '')).length);
+  const hits = headers.map((_, i) => sample.filter((line) => cleanEmail(line[i])).length);
   const email = hits.indexOf(Math.max(...hits));
   const keys = headers.map(fieldKey);
   let name = keys.findIndex((key) => /^(full_?)?name$/.test(key));
@@ -44,7 +41,7 @@ export function toContacts({ headers, lines }, columns) {
   let invalid = 0;
   let repeated = 0;
   for (const line of lines) {
-    const email = (line[columns.email] ?? '').match(EMAIL)?.[0].toLowerCase();
+    const email = cleanEmail(line[columns.email]);
     if (!email) invalid++;
     else if (seen.has(email)) repeated++;
     else {

@@ -274,3 +274,59 @@ test('nobody is emailed twice, and a reply is recognised by its sender', async (
   assert.equal((await get(`/api/campaigns/${second}`)).body.stats.replied, 1);
   assert.deepEqual((await post('/api/runner/match', { emails: ['cy@example.com'] })).body, { emails: [] }, 'already replied');
 });
+
+test('an address already in the contacts is never added again, however it is written', async () => {
+  const known = await post('/api/contacts/existing', { emails: ['Ann <ANN@example.com>', 'new@example.com', 'bo\u200B@example.com'] });
+  assert.deepEqual(known.body.existing.sort(), ['ann@example.com', 'bo@example.com']);
+  const imported = await post('/api/contacts/import', { list: 'again', rows: [{ email: ' ANN@example.com\uFEFF' }, { email: 'Bo <bo@example.com>' }] });
+  assert.deepEqual(imported.body, { added: 0, existing: 2, invalid: 0 });
+});
+
+test('files are attached in parts, copied with the campaign and handed to the runner', async () => {
+  const id = (await post('/api/campaigns')).body.id;
+  await call('PUT', `/api/campaigns/${id}`, { name: 'With a file', subject: 'Hi', body_html: '<p>Hi</p>', list: 'drivers' });
+
+  const refused = await post(`/api/campaigns/${id}/attachments`, { name: 'driver-app.apk', type: 'application/vnd.android.package-archive', size: 10 });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /Gmail does not send \.apk files/);
+
+  const bytes = Buffer.alloc(1_500_000);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = i % 251;
+  const created = await post(`/api/campaigns/${id}/attachments`, { name: 'C:\\docs\\flyer.pdf', type: 'application/pdf', size: bytes.length });
+  assert.equal(created.body.parts, 2, '1.5 MB is stored in two parts');
+  const fileId = created.body.id;
+  await call('PUT', `/api/attachments/${fileId}/parts/0`, { data: bytes.subarray(0, 1_400_000).toString('base64') });
+
+  let { attachments } = (await get(`/api/campaigns/${id}`)).body;
+  assert.deepEqual(attachments.map((file) => [file.name, file.complete]), [['flyer.pdf', false]]);
+  const early = await post(`/api/campaigns/${id}/test`, { email: 'me@example.com' });
+  assert.equal(early.status, 400);
+  assert.match(early.body.error, /did not finish uploading/);
+
+  assert.equal((await call('PUT', `/api/attachments/${fileId}/parts/2`, { data: 'AAAA' })).status, 400, 'no third part');
+  await call('PUT', `/api/attachments/${fileId}/parts/1`, { data: bytes.subarray(1_400_000).toString('base64') });
+  ({ attachments } = (await get(`/api/campaigns/${id}`)).body);
+  assert.deepEqual(attachments.map((file) => [file.name, file.type, file.size, file.complete]), [['flyer.pdf', 'application/pdf', 1_500_000, true]]);
+
+  // The runner gets the file's description with the test email, and fetches the parts.
+  assert.equal((await post(`/api/campaigns/${id}/test`, { email: 'me@example.com' })).status, 200);
+  const { messages, campaigns } = (await post('/api/runner/claim')).body;
+  assert.equal(messages.length, 1);
+  assert.deepEqual(campaigns[id].attachments, [{ id: fileId, name: 'flyer.pdf', type: 'application/pdf', size: 1_500_000, parts: 2 }]);
+  const parts = await Promise.all([0, 1].map(async (part) => Buffer.from((await post('/api/runner/part', { id: fileId, part })).body.data, 'base64')));
+  assert.ok(Buffer.concat(parts).equals(bytes));
+  await post('/api/runner/report', { results: [{ id: messages[0].id, status: 'sent' }] });
+
+  // A copy carries its own copy of the file; removing it from the copy leaves the original alone.
+  const copy = (await post('/api/campaigns', { copy_of: id })).body.id;
+  const [copied] = (await get(`/api/campaigns/${copy}`)).body.attachments;
+  assert.deepEqual([copied.name, copied.complete], ['flyer.pdf', true]);
+  assert.notEqual(copied.id, fileId);
+  assert.equal((await call('DELETE', `/api/attachments/${copied.id}`)).status, 200);
+  assert.deepEqual((await get(`/api/campaigns/${copy}`)).body.attachments, []);
+  assert.equal((await get(`/api/campaigns/${id}`)).body.attachments.length, 1);
+
+  // Deleting a campaign removes its files too.
+  assert.equal((await call('DELETE', `/api/campaigns/${id}`)).status, 200);
+  assert.equal((await post('/api/runner/part', { id: fileId, part: 0 })).status, 404);
+});

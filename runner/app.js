@@ -32,6 +32,7 @@ export function createApp(url, secret) {
   return {
     claim: (sender) => post('/api/runner/claim', { sender }),
     match: (emails) => post('/api/runner/match', { emails }),
+    part: (id, part) => post('/api/runner/part', { id, part }),
     report: (body) => post('/api/runner/report', body),
   };
 }

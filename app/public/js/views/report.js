@@ -34,7 +34,7 @@ function csvCell(value) {
 }
 
 export const CampaignReport = {
-  props: { campaign: Object, stats: Object },
+  props: { campaign: Object, attachments: Array, stats: Object },
   emits: ['changed'],
   setup(props, { emit }) {
     const id = props.campaign.id;
@@ -149,7 +149,7 @@ export const CampaignReport = {
         if (start + 500 >= page.total) break;
       }
       // The leading mark makes Excel read the file as UTF-8.
-      const url = URL.createObjectURL(new Blob(['﻿', lines.join('\r\n')], { type: 'text/csv' }));
+      const url = URL.createObjectURL(new Blob(['\uFEFF', lines.join('\r\n')], { type: 'text/csv' }));
       Object.assign(document.createElement('a'), { href: url, download: `${props.campaign.name}.csv` }).click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
@@ -236,7 +236,7 @@ export const CampaignReport = {
     </div>
 
     <Modal v-if="email" title="The email as sent" wide @close="email = null">
-      <p class="muted">Shown the way {{ email.to }} received it.</p>
+      <p class="muted">Shown the way {{ email.to }} received it.<template v-if="attachments.length"> Attached: {{ attachments.map((file) => file.name).join(", ") }}.</template></p>
       <iframe title="Email content" sandbox="allow-same-origin" :srcdoc="email.html" style="width: 100%; height: 56vh; border: 1px solid var(--line); border-radius: 6px"></iframe>
       <template #foot><button type="button" class="btn" @click="email = null">Close</button></template>
     </Modal>`,

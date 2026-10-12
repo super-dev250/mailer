@@ -1,9 +1,11 @@
 // Writing a campaign: who it goes to, the subject, the message, and a live preview.
 
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from '/vendor/vue.js';
+import { PART_BYTES, attachmentProblem, formatBytes } from '/shared/attachments.js';
 import { escapeHtml, findTags, renderEmail } from '/shared/email.js';
 import { api } from '../api.js';
 import { RichEditor } from '../editor.js';
+import { blobToBase64 } from '../images.js';
 import { count, plural } from '../format.js';
 import { ask, go, problem, remember, store, stored, toast } from '../store.js';
 
@@ -17,7 +19,7 @@ const SAVE_LABELS = { saved: 'All changes saved', dirty: 'Unsaved changes', savi
 
 export const CampaignEditor = {
   components: { RichEditor },
-  props: { campaign: Object },
+  props: { campaign: Object, attachments: Array },
   emits: ['started'],
   setup(props, { emit }) {
     const id = props.campaign.id;
@@ -112,6 +114,40 @@ export const CampaignEditor = {
     const dialog = ref('');
     const busy = ref(false);
     const uploading = ref(false);
+
+    // ---- Attachments: stored straight away, apart from the text ----
+    let newKey = 0;
+    const files = ref(props.attachments.map((file) => ({ ...file, key: file.id, progress: '' })));
+    const sendingFiles = computed(() => files.value.some((file) => file.progress));
+
+    async function attachOne(file) {
+      const problemText = attachmentProblem(file.name, file.size, files.value);
+      if (problemText) throw new Error(problemText);
+      const entry = reactive({ key: `new${++newKey}`, id: null, name: file.name, size: file.size, complete: false, progress: 'Starting…' });
+      files.value.push(entry);
+      try {
+        const created = await api.post(`/api/campaigns/${id}/attachments`, { name: file.name, type: file.type, size: file.size });
+        entry.id = created.id;
+        // In parts, because the app stores at most 1.4 MB in one piece.
+        for (let part = 0; part < created.parts; part++) {
+          entry.progress = `Uploading ${Math.round((part / created.parts) * 100)}%`;
+          const data = await blobToBase64(file.slice(part * PART_BYTES, (part + 1) * PART_BYTES));
+          await api.put(`/api/attachments/${entry.id}/parts/${part}`, { data });
+        }
+        Object.assign(entry, { complete: true, progress: '' });
+      } catch (error) {
+        files.value = files.value.filter((item) => item !== entry);
+        if (entry.id) api.del(`/api/attachments/${entry.id}`).catch(() => {});
+        throw error;
+      }
+    }
+    async function attach(list) {
+      for (const file of list) await attachOne(file).catch(problem);
+    }
+    async function detach(file) {
+      await api.del(`/api/attachments/${file.id}`);
+      files.value = files.value.filter((item) => item !== file);
+    }
     const button = reactive({ text: 'Get the app', url: 'https://' });
     const testEmail = ref(stored('mailer.test') || store.overview.sender_email);
 
@@ -178,6 +214,7 @@ export const CampaignEditor = {
     });
 
     return {
+      files, sendingFiles, attach, formatBytes, detach: (file) => detach(file).catch(problem),
       form, lists, audienceSize, sample, mergeItems, unknownTags, editor, subjectInput, insertInSubject,
       preview, device, dialog, busy, uploading, button, testEmail, pace, settings, store, SAVE_LABELS, saveState,
       openButtonDialog, closeButtonDialog, insertButton, sendTest, start, count, plural,
@@ -237,6 +274,25 @@ export const CampaignEditor = {
           <RichEditor ref="editor" v-model="form.body_html" @uploading="uploading = $event" />
           <span v-if="settings.footer" class="hint">Your postal address and an unsubscribe link are added below the message.</span>
         </div>
+        <div class="field">
+          <div class="row">
+            <span class="label">Attachments</span>
+            <span class="spacer"></span>
+            <label class="btn compact">
+              <Icon name="paperclip" /> Attach files
+              <input type="file" multiple hidden @change="attach([...$event.target.files]); $event.target.value = ''">
+            </label>
+          </div>
+          <div v-if="files.length" class="files">
+            <div v-for="file in files" :key="file.key" class="file">
+              <Icon name="paperclip" />
+              <span class="file-name" :title="file.name">{{ file.name }}</span>
+              <span class="muted small nowrap">{{ file.progress || (file.complete ? formatBytes(file.size) : 'Upload did not finish') }}</span>
+              <button v-if="!file.progress" type="button" class="btn ghost compact" :aria-label="'Remove ' + file.name" @click="detach(file)"><Icon name="x" /></button>
+            </div>
+          </div>
+          <span class="hint">Up to 5 files, 10 MB in all. Files in a first email make spam filters more careful: a link to the file is often safer.</span>
+        </div>
         <div v-if="unknownTags.length" class="notice problem">
           <Icon name="alert" />
           <span>No contact field matches <b>{{ unknownTags.join(', ') }}</b>. It would be left empty in the email.</span>
@@ -255,6 +311,7 @@ export const CampaignEditor = {
         <div class="preview-meta">
           <b>{{ preview.subject || 'No subject yet' }}</b>
           <span class="muted">From {{ settings.sender_name || 'you' }} · to {{ sample.name || sample.email }}</span>
+          <span v-if="files.length" class="muted"><Icon name="paperclip" /> {{ files.map((file) => file.name).join(', ') }}</span>
         </div>
         <div class="preview-stage" :class="device">
           <iframe title="Email preview" sandbox="allow-same-origin" :srcdoc="preview.html"></iframe>
@@ -279,7 +336,7 @@ export const CampaignEditor = {
       </div>
       <template #foot>
         <button type="button" class="btn" @click="dialog = ''">Cancel</button>
-        <button type="button" class="btn primary" :disabled="busy || uploading" @click="sendTest"><Icon name="send" /> Send test</button>
+        <button type="button" class="btn primary" :disabled="busy || uploading || sendingFiles" @click="sendTest"><Icon name="send" /> Send test</button>
       </template>
     </Modal>
 
@@ -296,7 +353,7 @@ export const CampaignEditor = {
       </div>
       <template #foot>
         <button type="button" class="btn" @click="dialog = ''">Cancel</button>
-        <button type="button" class="btn primary" :disabled="busy || uploading || !audienceSize" @click="start"><Icon name="play" /> Start sending</button>
+        <button type="button" class="btn primary" :disabled="busy || uploading || sendingFiles || !audienceSize" @click="start"><Icon name="play" /> Start sending</button>
       </template>
     </Modal>`,
 };

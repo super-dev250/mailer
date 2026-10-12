@@ -63,4 +63,6 @@ test('a database from the first version learns who was already emailed', async (
     { email: 'bounced@example.com', last_emailed_at: '2026-10-01T11:00:00.000Z' },
   ]);
   assert.equal(sqlite.prepare(`SELECT value FROM settings WHERE key = 'schema_version'`).get().value, String(MIGRATIONS.length));
+  const tables = sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'attachment%' ORDER BY name`).all();
+  assert.deepEqual(tables.map((row) => row.name), ['attachment_parts', 'attachments']);
 });

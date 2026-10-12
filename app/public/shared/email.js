@@ -10,6 +10,20 @@ export const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, (char
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
 const decodeEntities = (text) => text.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name) => ENTITIES[name]);
 
+// Invisible characters that come along when addresses are copied from web pages, chats or spreadsheets.
+const INVISIBLE = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+const ADDRESS = /[^\s@,;:<>()[\]"']+@[^\s@,;:<>()[\]"']+\.[^\s@,;:<>()[\]"']+/;
+
+/**
+ * The email address found in a piece of text, cleaned up and in lower case, or '' when there is none.
+ * "Lee <LEE@Example.com>", "mailto:lee@example.com" and the same address with invisible characters
+ * all give "lee@example.com", so they are recognised as one contact.
+ */
+export function cleanEmail(text) {
+  const found = String(text ?? '').replace(INVISIBLE, '').match(ADDRESS)?.[0] ?? '';
+  return found.toLowerCase().replace(/\.+$/, '');
+}
+
 /** "First Name" -> "first_name": the form used in merge tags and for stored column names. */
 export const fieldKey = (label) =>
   String(label ?? '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '_').replace(/^_+|_+$/g, '');

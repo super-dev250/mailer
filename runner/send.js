@@ -39,6 +39,7 @@ export function createMailer({ user, transport }) {
         subject,
         html,
         text: toText(html),
+        attachments: campaign.files ?? [],
         messageId: messageId(message.token, user),
         // With the footer on, mail apps also get the unsubscribe link, for their own unsubscribe button.
         headers: settings.footer

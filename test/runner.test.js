@@ -86,6 +86,9 @@ test('a run sends the queued emails and records each result', async () => {
     body_html: '<p>Hi {{first_name}}, <a href="https://app.example.com/get">get the app</a>.</p>',
     list: 'drivers',
   });
+  const file = Buffer.from('Open truck parking near you, in the app.');
+  const attached = await api('POST', `/api/campaigns/${campaignId}/attachments`, { name: 'parking.txt', type: 'text/plain', size: file.length });
+  await api('PUT', `/api/attachments/${attached.id}/parts/0`, { data: file.toString('base64') });
   await api('POST', `/api/campaigns/${campaignId}/start`, {});
 
   const inboxCalls = [];
@@ -108,6 +111,11 @@ test('a run sends the queued emails and records each result', async () => {
 
   const [mail] = received;
   const token = mail.messageId.match(/^<mailer-([a-f0-9]{24})@gmail\.com>$/)[1];
+  assert.deepEqual(
+    received.map((each) => each.attachments.map((item) => [item.filename, item.contentType, item.content.toString()])),
+    [[['parking.txt', 'text/plain', 'Open truck parking near you, in the app.']], [['parking.txt', 'text/plain', 'Open truck parking near you, in the app.']]],
+    'every email carries the attached file',
+  );
   const rawHeader = (name) => mail.headerLines.find((header) => header.key === name)?.line;
   assert.equal(mail.subject, 'Hello Lee');
   assert.equal(mail.from.text, '"Sam Road" <sam@gmail.com>');

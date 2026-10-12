@@ -72,6 +72,25 @@ export const MIGRATIONS = [
        SELECT MAX(sent_at) FROM messages m WHERE m.contact_id = contacts.id AND m.is_test = 0 AND m.status IN ('sent', 'bounced'))`,
     'CREATE INDEX IF NOT EXISTS messages_contact ON messages (contact_id, status)',
   ],
+  // 3: files attached to a campaign, stored in parts that each fit in one database value.
+  [
+    `CREATE TABLE IF NOT EXISTS attachments (
+      id INTEGER PRIMARY KEY,
+      campaign_id INTEGER NOT NULL REFERENCES campaigns (id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      parts INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+    'CREATE INDEX IF NOT EXISTS attachments_campaign ON attachments (campaign_id)',
+    `CREATE TABLE IF NOT EXISTS attachment_parts (
+      attachment_id INTEGER NOT NULL REFERENCES attachments (id) ON DELETE CASCADE,
+      part INTEGER NOT NULL,
+      data TEXT NOT NULL,
+      PRIMARY KEY (attachment_id, part)
+    )`,
+  ],
 ];
 
 export const DEFAULT_SETTINGS = {
