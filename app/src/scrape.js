@@ -5,11 +5,41 @@
 import { cleanEmail } from '../public/shared/email.js';
 import { check, HttpError } from './http.js';
 
-const NOREPLY = /noreply\.github\.com$/i;
-// git never validates a commit's author email, so old repositories carry plenty of junk:
-// a bare username with no "@", or (very common after a git-svn import) the local part followed
-// by the old Subversion repository's UUID instead of a real domain. Neither can ever receive mail.
-const SVN_UUID = /@[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Only the well-known public webmail providers: a real, checkable inbox someone actually reads,
+// as opposed to a corporate, institutional, bot or placeholder address (git never validates a
+// commit's author email, so those are common, and many are not reachable at all).
+const ALLOWED_DOMAINS = new RegExp(
+  '@(' +
+    [
+      'gmail\\.com',
+      'googlemail\\.com',
+      'outlook\\.(?:com|[a-z]{2,3})',
+      'hotmail\\.(?:com|[a-z]{2,3})',
+      'live\\.com',
+      'msn\\.com',
+      'yahoo\\.(?:com|co\\.[a-z]{2}|[a-z]{2,3})',
+      'ymail\\.com',
+      'rocketmail\\.com',
+      'icloud\\.com',
+      'me\\.com',
+      'mac\\.com',
+      'aol\\.com',
+      'protonmail\\.(?:com|ch)',
+      'proton\\.me',
+      'gmx\\.(?:com|net|de)',
+      'mail\\.com',
+      'zoho\\.com',
+      'yandex\\.(?:com|ru)',
+      'qq\\.com',
+      '163\\.com',
+      '126\\.com',
+      'naver\\.com',
+      'fastmail\\.com',
+      'hey\\.com',
+    ].join('|') +
+    ')$',
+  'i',
+);
 const PER_PAGE = 100;
 const MAX_PAGE = 10; // GitHub's search API returns at most 1000 results for one query: 10 pages of 100.
 
@@ -49,7 +79,7 @@ export async function search({ env, body }) {
   const rows = [];
   for (const item of data.items ?? []) {
     const email = cleanEmail(item.commit?.author?.email);
-    if (!email || NOREPLY.test(email) || SVN_UUID.test(email) || seen.has(email)) continue;
+    if (!email || !ALLOWED_DOMAINS.test(email) || seen.has(email)) continue;
     seen.add(email);
     rows.push({
       name: String(item.commit?.author?.name ?? '').trim(),

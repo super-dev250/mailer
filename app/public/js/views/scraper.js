@@ -1,12 +1,14 @@
-// Finds name, email, GitHub login and profile URL for people behind every commit on GitHub,
-// then exports the results as CSV or adds them to the contact list, never twice. There is no
-// query to write: it works through the entire commit history itself, a date range at a time,
-// splitting a range further whenever GitHub's 1000-results-per-query cap is hit, and does not
-// stop on its own until that history is exhausted or Stop is pressed.
+// Finds the email, name, GitHub login and profile URL of real, reachable people (only well-known
+// webmail providers: Gmail, Outlook, Yahoo and the like — not corporate, institutional or bot
+// addresses) behind every commit on GitHub, then exports the results as CSV or adds them to the
+// contact list, never twice. There is no query to write: under the hood it works through the
+// entire commit history a date range at a time, splitting a range further whenever GitHub's
+// 1000-results-per-query cap is hit, but that is an implementation detail and never shown.
 //
-// The search keeps running in a module-level singleton, not component state, so switching to
-// another page and back does not lose progress or stop it: only Stop, or the search finishing
-// on its own, does that.
+// Progress (what has been found, and what is left to search) is saved as it goes, both in a
+// module-level singleton — so switching to another page and back does not lose it — and in
+// localStorage, so Stop followed by Start later resumes from where it left off instead of
+// starting over from the beginning of GitHub's history every time.
 
 import { reactive } from '/vendor/vue.js';
 import { api } from '../api.js';
@@ -36,18 +38,42 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 // of raising an error when it fails to.
 const iso = (seconds) => new Date(seconds * 1000).toISOString().replace(/\.\d{3}Z$/, '+00:00');
 
+const STORAGE_KEY = 'mailer.scraper.progress';
+function loadProgress() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null; // private browsing, or storage unavailable: nothing to resume from
+  }
+}
+function saveProgress() {
+  try {
+    if (state.pendingRanges.length) {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ pendingRanges: state.pendingRanges, rows: state.rows, seen: state.seen, skipped: state.skipped, totalFound: state.totalFound }),
+      );
+    } else {
+      localStorage.removeItem(STORAGE_KEY); // finished: nothing left to resume
+    }
+  } catch {
+    // Not persisted. Progress still survives navigating within the app for this browser tab.
+  }
+}
+
 const state = reactive({
   rows: [],
+  seen: [], // every email encountered so far, kept or not, so a resumed search never redoes work
+  pendingRanges: [], // date ranges not yet searched; what Stop leaves behind for Start to resume
   running: false,
   done: false, // the whole history, start to end, has been covered
-  page: 0,
-  slicesLeft: 0,
-  currentRange: '',
   totalFound: 0,
   skipped: 0, // matches left out because they are already a contact
   waitingFor: 0, // seconds left in a GitHub-imposed pause, or 0
   stopRequested: false,
 });
+Object.assign(state, loadProgress() ?? {});
 
 // One page, waiting out the backoff GitHub itself asks for whenever it rate-limits us and trying
 // again, for as long as it takes: giving up after a handful of tries would just lose a long run
@@ -98,7 +124,6 @@ async function collect(query, seen, canSplit) {
   let page = 1;
   for (;;) {
     const data = await fetchPage(query, page);
-    state.page++;
     if (page === 1 && !data.truncated) state.totalFound += data.total;
     const fresh = data.rows.filter((row) => !seen.has(row.email));
     fresh.forEach((row) => seen.add(row.email));
@@ -121,22 +146,24 @@ async function collect(query, seen, canSplit) {
 async function run() {
   if (state.running) return;
   extraDelay = 0;
-  state.rows = [];
-  state.page = 0;
-  state.slicesLeft = 0;
-  state.totalFound = 0;
-  state.skipped = 0;
+  // Nothing left over from a previous Stop: start from the beginning of GitHub's history.
+  // Otherwise pick up exactly where that search left off.
+  if (!state.pendingRanges.length) {
+    state.rows = [];
+    state.seen = [];
+    state.totalFound = 0;
+    state.skipped = 0;
+    state.pendingRanges = [[EARLIEST, nowSeconds()]];
+  }
   state.done = false;
   state.stopRequested = false;
   state.running = true;
-  const seen = new Set();
-  const ranges = [[EARLIEST, nowSeconds()]];
+  const seen = new Set(state.seen);
+  const ranges = state.pendingRanges;
   try {
     while (ranges.length && !state.stopRequested) {
       const [from, to] = ranges.shift();
       const canSplit = to > from;
-      state.slicesLeft = ranges.length;
-      state.currentRange = `${iso(from)} .. ${iso(to)}`;
       const query = `author-date:${iso(from)}..${iso(to)}`;
       const { truncated } = await collect(query, seen, canSplit);
       if (truncated && canSplit) {
@@ -145,6 +172,8 @@ async function run() {
         ranges.unshift([mid + 1, to]);
         ranges.unshift([from, mid]);
       }
+      state.seen = [...seen];
+      saveProgress();
       if (ranges.length && !state.stopRequested) await pace({ rate_remaining: null });
     }
     state.done = ranges.length === 0 && !state.stopRequested;
@@ -158,10 +187,15 @@ async function run() {
   } finally {
     state.running = false;
     state.waitingFor = 0;
-    state.currentRange = '';
+    saveProgress();
   }
 }
 const stop = () => (state.stopRequested = true);
+function startOver() {
+  state.pendingRanges = [];
+  state.done = false;
+  run();
+}
 
 function toCsv(rows) {
   const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
@@ -213,7 +247,7 @@ export const ScraperView = {
       }
     }
 
-    return { store, state, run, stop, exportCsv, dialog, openAdd, addToContacts, count, plural };
+    return { store, state, run, stop, startOver, exportCsv, dialog, openAdd, addToContacts, count, plural };
   },
   template: `
     <div class="page-head">
@@ -233,14 +267,17 @@ export const ScraperView = {
       <div class="card pad">
         <div style="display: flex; align-items: center; gap: 16px">
           <p class="muted" style="margin: 0; flex: 1">
-            Works through GitHub's entire commit history on its own, collecting the email each commit was made with and skipping GitHub's private <code>noreply</code> addresses and anyone already in your contacts. Keeps running while you visit other pages, and does not stop on its own until it has gone through all of it.
+            Works through GitHub's entire commit history on its own, collecting the email each commit was made with — only real, reachable addresses from well-known providers like Gmail, Outlook and Yahoo — and skipping anyone already in your contacts. Keeps running while you visit other pages. Stop and Start again picks up right where it left off.
           </p>
-          <button v-if="!state.running" type="button" class="btn primary" @click="run"><Icon name="search" /> {{ state.rows.length ? 'Start over' : 'Start' }}</button>
+          <button v-if="!state.running" type="button" class="btn primary" @click="run"><Icon name="search" /> {{ state.pendingRanges.length && !state.done ? 'Resume' : 'Start' }}</button>
           <button v-else type="button" class="btn danger" @click="stop"><Icon name="pause" /> Stop</button>
         </div>
+        <p v-if="!state.running && state.pendingRanges.length && !state.done">
+          <button type="button" class="btn compact ghost" @click="startOver">Start over from the beginning instead</button>
+        </p>
         <p v-if="state.waitingFor" class="muted">GitHub asked us to slow down. Waiting {{ state.waitingFor }}s before trying again… {{ plural(state.rows.length, 'contact') }} found so far.</p>
         <p v-else-if="state.running" class="muted">
-          Searching {{ state.currentRange }}… page {{ count(state.page) }}{{ state.slicesLeft ? ', ' + plural(state.slicesLeft, 'date range') + ' left to check' : '' }}, {{ plural(state.rows.length, 'contact') }} found so far{{ state.totalFound ? ' of up to ' + count(state.totalFound) + ' commits seen' : '' }}{{ state.skipped ? ' · ' + plural(state.skipped, 'address', 'addresses') + ' already in your contacts, left out' : '' }}.
+          Searching… {{ plural(state.rows.length, 'contact') }} found so far{{ state.totalFound ? ' of up to ' + count(state.totalFound) + ' commits seen' : '' }}{{ state.skipped ? ' · ' + plural(state.skipped, 'address', 'addresses') + ' already in your contacts, left out' : '' }}.
         </p>
         <p v-else-if="state.done" class="notice"><Icon name="check" /><span>Went through the entire commit history. {{ plural(state.rows.length, 'contact') }} found{{ state.skipped ? ' · ' + plural(state.skipped, 'address', 'addresses') + ' already in your contacts, left out' : '' }}.</span></p>
         <p v-else-if="state.rows.length && state.skipped" class="muted">{{ plural(state.skipped, 'address', 'addresses') }} already in your contacts were left out.</p>

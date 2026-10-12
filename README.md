@@ -78,7 +78,7 @@ Without this step, emails go out with the next hourly run, or when you press **R
 
 ### Optional: find GitHub contacts
 
-The **GitHub contacts** page works through the entire public commit history on GitHub on its own (there is nothing to configure or type) and collects the name, email, login and profile URL of the people behind each commit, skipping GitHub's private `noreply` addresses, addresses that are not real (common in old repositories converted from Subversion), and anyone already in your contacts. It needs its own token, because GitHub only allows commit search when signed in.
+The **GitHub contacts** page works through the entire public commit history on GitHub on its own (there is nothing to configure or type) and collects the name, email, login and profile URL of the people behind each commit. Only addresses at well-known webmail providers (Gmail, Outlook, Yahoo, iCloud and similar) are kept, since those are real inboxes someone actually reads; corporate, institutional, bot and placeholder addresses, which git never validates and are common in commit history, are left out. Anyone already in your contacts is left out too. It needs its own token, because GitHub only allows commit search when signed in.
 
 1. Open <https://github.com/settings/personal-access-tokens/new>.
 2. Name it `mailer-scraper`. Pick the longest expiration offered, and note the date: the app stops searching when it expires.
@@ -87,7 +87,7 @@ The **GitHub contacts** page works through the entire public commit history on G
 5. In this repository open **Settings > Secrets and variables > Actions > New repository secret**, name it `GH_API_TOKEN` and paste the token.
 6. In the Actions tab open **Test and deploy** and press **Run workflow**, so the app receives the token.
 
-Press **Start** and it goes through GitHub's commit history from 1990 to today, a date range at a time, automatically splitting a range further whenever more than 1000 commits fall inside it (GitHub never returns more than that for one search). It keeps going, including while you visit other pages in the app, until it has gone through all of history or you press **Stop**; either way, what it has found so far is kept. Because GitHub allows only a handful of these searches per minute, going through all of history can take a long time. **Export CSV** downloads the list, and **Add to contacts** adds everyone found to a list of your choice.
+Press **Start** and it goes through GitHub's entire commit history on its own. It keeps going, including while you visit other pages in the app, until it has gone through all of history or you press **Stop**; either way, what it has found so far is kept. Because GitHub allows only a handful of these searches per minute, going through all of history can take a long time — pressing **Start** again after a **Stop** resumes from where it left off (shown as **Resume**) instead of starting over, so stopping to use the results so far never loses progress. **Export CSV** downloads the list, and **Add to contacts** adds everyone found to a list of your choice.
 
 ## Using it
 
