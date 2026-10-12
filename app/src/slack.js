@@ -1,96 +1,61 @@
-// Finds public contact details on Slack: given a search query, looks through message search
-// results for the email address people posted, alongside their display name and a permalink to
-// the message. Needs the optional SLACK_API_TOKEN secret: a user token with the search:read
-// scope, because Slack's search API only works with a token that can search as a real member.
+// Finds the registered email address of every member of a Slack workspace, from the user
+// directory rather than scanning message text: a directory entry is the address someone actually
+// signed up with, not a best-effort guess scraped out of free-text messages. Needs the optional
+// SLACK_API_TOKEN secret: a token with the users:read.email scope, which Slack treats as
+// sensitive and only grants to a workspace admin/owner's token or an app an admin has approved.
 
-import { cleanEmail } from '../public/shared/email.js';
-import { ALLOWED_DOMAINS, EXCLUDED_LOCATIONS, LOOKS_GENERATED } from './emailFilters.js';
+import { EXCLUDED_LOCATIONS, LOOKS_GENERATED } from './emailFilters.js';
 import { check, HttpError } from './http.js';
 
-const PER_PAGE = 100;
-const MAX_PAGE = 100; // Slack's search API returns at most 10,000 results for one query: 100 pages of 100.
-
-// One Worker invocation gets a limited number of outgoing requests; this leaves headroom for the
-// search request itself plus a safety margin, so a page with unusually many distinct posters
-// degrades to "not all of them checked" instead of failing outright.
-const MAX_LOCATION_LOOKUPS = 40;
-
-async function excludedLocations(env, userIds) {
-  const unique = [...new Set(userIds)].slice(0, MAX_LOCATION_LOOKUPS);
-  const excluded = new Set();
-  await Promise.all(
-    unique.map(async (id) => {
-      try {
-        const response = await fetch(`https://slack.com/api/users.info?user=${encodeURIComponent(id)}`, {
-          headers: { Authorization: `Bearer ${env.SLACK_API_TOKEN}` },
-        });
-        if (!response.ok) return; // unknown: kept, not excluded
-        const data = await response.json();
-        if (!data.ok) return;
-        // Slack profiles have no free-text "location" field; the timezone label is the closest
-        // proxy available (e.g. "Pakistan Standard Time"), and just as unreliable as GitHub's.
-        const label = data.user?.tz_label || data.user?.tz || '';
-        if (label && EXCLUDED_LOCATIONS.test(label)) excluded.add(id);
-      } catch {
-        // Unknown: kept, not excluded.
-      }
-    }),
-  );
-  return excluded;
-}
+const PER_PAGE = 200; // Slack's own documented maximum page size for users.list.
 
 export const canScrape = (env) => Boolean(env.SLACK_API_TOKEN);
 
 export async function search({ env, body }) {
   check(canScrape(env), 400, 'Finding Slack contacts needs the optional SLACK_API_TOKEN secret. See the README.');
   const input = await body();
-  const query = String(input.query ?? '').trim();
-  check(query, 400, 'Enter a search query.');
-  const page = Math.min(MAX_PAGE, Math.max(1, Math.round(Number(input.page)) || 1));
+  const cursor = String(input.cursor ?? '').trim();
 
-  const response = await fetch(
-    `https://slack.com/api/search.messages?query=${encodeURIComponent(query)}&count=${PER_PAGE}&page=${page}&sort=timestamp`,
-    { headers: { Authorization: `Bearer ${env.SLACK_API_TOKEN}` } },
-  );
+  const url = new URL('https://slack.com/api/users.list');
+  url.searchParams.set('limit', String(PER_PAGE));
+  if (cursor) url.searchParams.set('cursor', cursor);
+
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${env.SLACK_API_TOKEN}` } });
   if (response.status === 429) {
     const retryAfter = Number(response.headers.get('retry-after')) || 60;
-    throw new HttpError(429, 'Slack is rate-limiting these searches.', { retry_after: retryAfter });
+    throw new HttpError(429, 'Slack is rate-limiting these requests.', { retry_after: retryAfter });
   }
-  if (!response.ok) throw new HttpError(502, `Slack search failed (HTTP ${response.status}).`);
+  if (!response.ok) throw new HttpError(502, `Slack directory lookup failed (HTTP ${response.status}).`);
   const data = await response.json();
   if (!data.ok) {
     if (data.error === 'invalid_auth' || data.error === 'not_authed' || data.error === 'token_revoked') {
       throw new HttpError(400, 'SLACK_API_TOKEN was rejected by Slack. Check the secret.');
     }
-    if (data.error === 'ratelimited') throw new HttpError(429, 'Slack is rate-limiting these searches.', { retry_after: 60 });
-    throw new HttpError(502, `Slack search failed (${data.error}).`);
+    if (data.error === 'missing_scope') {
+      throw new HttpError(400, 'SLACK_API_TOKEN is missing the users:read.email scope. See the README.');
+    }
+    if (data.error === 'ratelimited') throw new HttpError(429, 'Slack is rate-limiting these requests.', { retry_after: 60 });
+    throw new HttpError(502, `Slack directory lookup failed (${data.error}).`);
   }
 
-  const seen = new Set();
-  let rows = [];
-  for (const item of data.messages?.matches ?? []) {
-    const email = cleanEmail(item.text);
-    if (!email || !ALLOWED_DOMAINS.test(email) || LOOKS_GENERATED.test(email.split('@')[0]) || seen.has(email)) continue;
-    seen.add(email);
+  const rows = [];
+  for (const member of data.members ?? []) {
+    // Deactivated accounts, bots and installed apps have no real inbox behind them. Slackbot
+    // itself always shows up in this list too, and is never a real person.
+    if (member.deleted || member.is_bot || member.is_app_user || member.id === 'USLACKBOT') continue;
+    const email = String(member.profile?.email ?? '').trim().toLowerCase();
+    if (!email || LOOKS_GENERATED.test(email.split('@')[0])) continue;
+    // users.list already carries each member's timezone, so no extra per-user request is needed
+    // here the way GitHub's separate profile lookup was: best-effort only, same as there.
+    const location = member.tz_label || member.tz || '';
+    if (location && EXCLUDED_LOCATIONS.test(location)) continue;
     rows.push({
-      name: String(item.username ?? '').trim(),
+      name: String(member.profile?.real_name || member.real_name || member.name || '').trim(),
       email,
-      user_id: item.user ?? '',
-      url: item.permalink ?? '',
+      user_id: member.id,
+      url: member.team_id ? `slack://user?team=${encodeURIComponent(member.team_id)}&id=${encodeURIComponent(member.id)}` : '',
     });
   }
-  const excluded = await excludedLocations(env, rows.filter((row) => row.user_id).map((row) => row.user_id));
-  if (excluded.size) rows = rows.filter((row) => !excluded.has(row.user_id));
-
-  // Slack reports the true match count here even though it only lets us page through the first
-  // 10,000: that is how the caller knows a query needs to be narrowed to get the rest.
-  const total = data.messages?.total ?? 0;
-  const reachable = Math.min(total, MAX_PAGE * PER_PAGE);
-  return {
-    rows,
-    page,
-    has_more: page < MAX_PAGE && page * PER_PAGE < reachable,
-    total,
-    truncated: total > MAX_PAGE * PER_PAGE,
-  };
+  const next = data.response_metadata?.next_cursor ?? '';
+  return { rows, cursor: next, has_more: Boolean(next) };
 }

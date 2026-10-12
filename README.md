@@ -91,16 +91,18 @@ Press **Start** and it goes through GitHub's entire commit history on its own. I
 
 ### Optional: find Slack contacts
 
-The **Slack contacts** page searches messages in a Slack workspace for email addresses people have posted, and collects the display name, address and a link back to the message. Only addresses at well-known webmail providers (Gmail, Outlook, Yahoo, iCloud and similar) are kept, for the same reason as the GitHub contacts page, and anyone already in your contacts is left out too. Unlike GitHub contacts, Slack has no history to crawl on its own, so a search query is required — e.g. `gmail.com OR outlook.com OR yahoo.com` to find messages that mention any of those domains, or your own narrower query using Slack's search operators. It needs its own token, because Slack's search API only works with a token that can search as a real member, not a bot.
+The **Slack contacts** page works through a Slack workspace's member directory on its own (there is nothing to configure or type) and collects the name, registered email and profile link of every real member — a bot, app, deactivated account or Slackbot itself is left out. Because this reads the actual address each person signed up with, rather than scanning message text for one, it needs a token with the `users:read.email` scope, which Slack treats as sensitive: an app can only get it once a workspace **owner or admin** installs it (a regular member's own token is not enough, even if they generate it themselves). Anyone already in your contacts is left out too.
 
 1. Open <https://api.slack.com/apps> and create a new app (**From scratch**) in the workspace you want to search.
-2. Under **OAuth & Permissions**, add the `search:read` **User Token Scope**.
-3. **Install to Workspace** and approve it.
+2. Under **OAuth & Permissions**, add the `users:read.email` and `users:read` **User Token Scopes**.
+3. **Install to Workspace**, signed in as an owner or admin, and approve it.
 4. Copy the **User OAuth Token** (starts with `xoxp-`). Slack shows it on the same page afterwards too, so note the app name in case it needs revoking later.
 5. In this repository open **Settings > Secrets and variables > Actions > New repository secret**, name it `SLACK_API_TOKEN` and paste the token.
 6. In the Actions tab open **Test and deploy** and press **Run workflow**, so the app receives the token.
 
-Type a search query and press **Start**. It pages through every matching message, including while you visit other pages in the app, until there are no more pages or you press **Stop**; either way, what it has found so far is kept. Because Slack rate-limits these searches, going through many pages can take a while — pressing **Start** again after a **Stop**, with the same query, resumes from where it left off (shown as **Resume**) instead of starting over. **Export CSV** downloads the list, and **Add to contacts** adds everyone found to a list of your choice.
+Press **Start** and it goes through the entire member directory on its own. It keeps going, including while you visit other pages in the app, until it has gone through everyone or you press **Stop**; either way, what it has found so far is kept. Pressing **Start** again after a **Stop** resumes from where it left off (shown as **Resume**) instead of starting over, so stopping to use the results so far never loses progress. **Export CSV** downloads the list, and **Add to contacts** adds everyone found to a list of your choice.
+
+This only ever covers the one workspace the token belongs to. Searching several separate workspaces needs a token (and a repeat of this setup) for each one; there is no way to search a workspace you are not a member of, or an arbitrary workspace at large — Slack's API has no such thing.
 
 ## Using it
 

@@ -5,5 +5,5 @@ APP_SECRET=local-dev-secret-change-me
 # Optional: lets the GitHub contacts page search commits. See the README.
 # GH_API_TOKEN=
 
-# Optional: lets the Slack contacts page search messages. See the README.
+# Optional: lets the Slack contacts page list workspace members' emails. See the README.
 # SLACK_API_TOKEN=
