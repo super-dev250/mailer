@@ -11,7 +11,12 @@ async function request(method, path, body) {
   });
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) signOut();
-  if (!response.ok) throw new Error(data.error ?? `The request failed (${response.status}).`);
+  if (!response.ok) {
+    const error = new Error(data.error ?? `The request failed (${response.status}).`);
+    error.status = response.status;
+    error.retryAfter = data.retry_after;
+    throw error;
+  }
   return data;
 }
 

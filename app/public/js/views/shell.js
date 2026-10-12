@@ -7,16 +7,18 @@ import { problem, signOut, store, toast } from '../store.js';
 import { CampaignView } from './campaign.js';
 import { CampaignsView } from './campaigns.js';
 import { ContactsView } from './contacts.js';
+import { ScraperView } from './scraper.js';
 import { SettingsView } from './settings.js';
 
 const NAV = [
   { view: 'campaigns', label: 'Campaigns', icon: 'send' },
   { view: 'contacts', label: 'Contacts', icon: 'users' },
+  { view: 'scraper', label: 'GitHub contacts', icon: 'search' },
   { view: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
 export const Shell = {
-  components: { CampaignView, CampaignsView, ContactsView, SettingsView },
+  components: { CampaignView, CampaignsView, ContactsView, ScraperView, SettingsView },
   setup() {
     const failure = ref('');
     const load = () =>
@@ -67,6 +69,7 @@ export const Shell = {
         <CampaignView v-if="store.route.view === 'campaigns' && store.route.id" :id="store.route.id" :key="store.route.id" />
         <CampaignsView v-else-if="store.route.view === 'campaigns'" />
         <ContactsView v-else-if="store.route.view === 'contacts'" />
+        <ScraperView v-else-if="store.route.view === 'scraper'" />
         <SettingsView v-else-if="store.route.view === 'settings'" />
         <div v-else class="empty"><h2>Page not found</h2><a class="btn" href="#/campaigns">Go to campaigns</a></div>
       </main>
