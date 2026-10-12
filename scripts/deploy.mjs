@@ -37,6 +37,8 @@ const secrets = {
   DISPATCH_TOKEN: env.DISPATCH_TOKEN?.trim(),
   // Lets the GitHub contacts page search commits.
   GH_API_TOKEN: env.GH_API_TOKEN?.trim(),
+  // Lets the Slack contacts page search messages.
+  SLACK_API_TOKEN: env.SLACK_API_TOKEN?.trim(),
 };
 const folder = mkdtempSync(join(tmpdir(), 'mailer-'));
 const secretsFile = join(folder, 'secrets.json');
