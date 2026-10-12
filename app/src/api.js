@@ -158,24 +158,25 @@ export async function existingContacts({ db, body }) {
 }
 
 function contactSelection(input) {
-  if (Array.isArray(input.ids)) return { where: 'id IN (SELECT value FROM json_each(?))', arg: JSON.stringify(input.ids) };
+  if (Array.isArray(input.ids)) return { where: 'id IN (SELECT value FROM json_each(?))', args: [JSON.stringify(input.ids)] };
+  if (input.all === true) return { where: '1 = 1', args: [] };
   check(typeof input.list === 'string', 400, 'Choose the contacts to change.');
-  return { where: 'list = ?', arg: input.list };
+  return { where: 'list = ?', args: [input.list] };
 }
 
 export async function deleteContacts({ db, body }) {
-  const { where, arg } = contactSelection(await body());
+  const { where, args } = contactSelection(await body());
   // Counted from the returned rows: the change count would also include the messages
   // that the delete detaches from these contacts.
-  const { results } = await db.prepare(`DELETE FROM contacts WHERE ${where} RETURNING id`).bind(arg).all();
+  const { results } = await db.prepare(`DELETE FROM contacts WHERE ${where} RETURNING id`).bind(...args).all();
   return { deleted: results.length };
 }
 
 export async function setContactStatus({ db, body }) {
   const input = await body();
   check(['active', 'unsubscribed'].includes(input.status), 400, 'Unknown status.');
-  const { where, arg } = contactSelection(input);
-  const result = await db.prepare(`UPDATE contacts SET status = ? WHERE ${where}`).bind(input.status, arg).run();
+  const { where, args } = contactSelection(input);
+  const result = await db.prepare(`UPDATE contacts SET status = ? WHERE ${where}`).bind(input.status, ...args).run();
   return { changed: result.meta.changes };
 }
 

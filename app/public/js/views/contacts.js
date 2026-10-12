@@ -83,6 +83,23 @@ export const ContactsView = {
       list.value = null;
       await refreshOverview();
     });
+    const removeAll = act(async () => {
+      if (
+        !(await ask({
+          title: `Delete all ${count(totalContacts.value)} contacts?`,
+          text: 'Every contact in every list is removed. Results of emails already sent are kept. This cannot be undone.',
+          action: 'Delete all contacts',
+          danger: true,
+        }))
+      )
+        return;
+      const { deleted } = await api.post('/api/contacts/delete', { all: true });
+      toast(`${plural(deleted, 'contact')} deleted.`);
+      list.value = null;
+      search.value = '';
+      status.value = '';
+      await Promise.all([loadRows(), refreshOverview()]);
+    });
 
     // ---- Dialogs ----
     const dialog = ref('');
@@ -162,7 +179,7 @@ export const ContactsView = {
 
     return {
       PAGE_SIZE, STATUS, store, rows, total, search, list, status, offset, selected, busy, totalContacts, allSelected, toggle, toggleAll,
-      setStatus, removeSelected, removeList, dialog, fresh, addContact, table, columns, listName, dragging, progress, result, parsed, existing, newContacts,
+      setStatus, removeSelected, removeList, removeAll, dialog, fresh, addContact, table, columns, listName, dragging, progress, result, parsed, existing, newContacts,
       openImport, readFile, onDrop, runImport, count, plural, when,
     };
   },
@@ -171,6 +188,7 @@ export const ContactsView = {
       <h1>Contacts</h1>
       <span class="muted">{{ count(totalContacts) }}</span>
       <div class="actions">
+        <button v-if="totalContacts" type="button" class="btn ghost danger" :disabled="busy" @click="removeAll"><Icon name="trash" /> Delete all</button>
         <button type="button" class="btn" @click="dialog = 'add'"><Icon name="plus" /> Add contact</button>
         <button type="button" class="btn primary" @click="openImport"><Icon name="upload" /> Import file</button>
       </div>

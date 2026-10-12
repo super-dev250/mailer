@@ -10,7 +10,7 @@
 // localStorage, so Stop followed by Start later resumes from where it left off instead of
 // starting over from the beginning of GitHub's history every time.
 
-import { reactive } from '/vendor/vue.js';
+import { computed, reactive, ref } from '/vendor/vue.js';
 import { api } from '../api.js';
 import { count, plural } from '../format.js';
 import { problem, store, toast } from '../store.js';
@@ -214,6 +214,18 @@ function exportCsv() {
 
 export const ScraperView = {
   setup() {
+    // ---- Filtering and removing individual results, before export or import ----
+    const filter = ref('');
+    const filteredRows = computed(() => {
+      const q = filter.value.trim().toLowerCase();
+      if (!q) return state.rows;
+      return state.rows.filter((row) => row.name.toLowerCase().includes(q) || row.email.toLowerCase().includes(q) || row.login.toLowerCase().includes(q));
+    });
+    function removeRow(email) {
+      const index = state.rows.findIndex((row) => row.email === email);
+      if (index >= 0) state.rows.splice(index, 1);
+    }
+
     // ---- Add to contacts, same rule as everywhere else: nobody is added twice ----
     const dialog = reactive({ open: false, listName: 'GitHub', busy: false, result: null });
 
@@ -247,7 +259,7 @@ export const ScraperView = {
       }
     }
 
-    return { store, state, run, stop, startOver, exportCsv, dialog, openAdd, addToContacts, count, plural };
+    return { store, state, run, stop, startOver, exportCsv, filter, filteredRows, removeRow, dialog, openAdd, addToContacts, count, plural };
   },
   template: `
     <div class="page-head">
@@ -284,18 +296,24 @@ export const ScraperView = {
       </div>
 
       <div v-if="state.rows.length" class="card">
+        <div class="card-head">
+          <input type="search" v-model="filter" placeholder="Filter by name, email or login" aria-label="Filter results" style="width: 260px">
+          <span class="muted" v-if="filter.trim()">{{ plural(filteredRows.length, 'match', 'matches') }}</span>
+        </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Email</th><th>Login</th><th>Profile</th></tr></thead>
+            <thead><tr><th>Name</th><th>Email</th><th>Login</th><th>Profile</th><th class="narrow"></th></tr></thead>
             <tbody>
-              <tr v-for="row in state.rows" :key="row.email">
+              <tr v-for="row in filteredRows" :key="row.email">
                 <td>{{ row.name }}</td>
                 <td class="cell-title">{{ row.email }}</td>
                 <td>{{ row.login }}</td>
                 <td><a v-if="row.url" :href="row.url" target="_blank" rel="noopener">{{ row.url }}</a></td>
+                <td class="narrow"><button type="button" class="btn compact ghost danger" :aria-label="'Remove ' + row.email" @click="removeRow(row.email)"><Icon name="trash" /></button></td>
               </tr>
             </tbody>
           </table>
+          <div v-if="filter.trim() && !filteredRows.length" class="empty">No results match.</div>
         </div>
       </div>
     </template>
