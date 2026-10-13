@@ -2,6 +2,10 @@ name: Mailer
 
 # Sends the next batch of queued emails through Gmail, then reads the mailbox
 # for replies and bounces. All of it is configured in the web app.
+#
+# One job per Gmail account: with a single mailbox this is exactly the one job it always was;
+# with several (the GMAIL_ACCOUNTS secret — see the README), they run in parallel, each with its
+# own send pace and its own inbox, so one account's volume or reputation never affects another's.
 
 on:
   # This is a backup: GitHub documents its own schedule trigger as best-effort, and it can
@@ -16,14 +20,38 @@ on:
 permissions:
   contents: read
 
-# One run at a time, so the mailbox is never used by two runs at once.
-concurrency:
-  group: mailer
-  cancel-in-progress: false
-
 jobs:
+  mailboxes:
+    name: List mailboxes
+    runs-on: ubuntu-latest
+    outputs:
+      indexes: ${{ steps.list.outputs.indexes }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Only ever outputs how many accounts are configured (e.g. [0,1]), never the secrets themselves.
+      - id: list
+        run: echo "indexes=$(node scripts/mailbox-matrix.mjs)" >> "$GITHUB_OUTPUT"
+        env:
+          GMAIL_ACCOUNTS: ${{ secrets.GMAIL_ACCOUNTS }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+
   run:
     name: Send and check
+    needs: mailboxes
+    if: needs.mailboxes.outputs.indexes != '[]'
+    strategy:
+      matrix:
+        index: ${{ fromJson(needs.mailboxes.outputs.indexes) }}
+      # One mailbox having a bad run (a wrong password, Gmail blocking it) should not stop the others.
+      fail-fast: false
+    # One run per mailbox at a time, so a mailbox's own inbox is never used by two runs at once.
+    concurrency:
+      group: mailer-${{ matrix.index }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -39,3 +67,5 @@ jobs:
           APP_SECRET: ${{ secrets.APP_SECRET }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          GMAIL_ACCOUNTS: ${{ secrets.GMAIL_ACCOUNTS }}
+          MAILBOX_INDEX: ${{ matrix.index }}

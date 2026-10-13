@@ -9,16 +9,43 @@ import { createMailer } from './send.js';
 
 const env = process.env;
 
-const missing = ['APP_URL', 'APP_SECRET', 'GMAIL_USER', 'GMAIL_APP_PASSWORD'].filter((name) => !env[name]?.trim());
+const missing = ['APP_URL', 'APP_SECRET'].filter((name) => !env[name]?.trim());
 if (missing.length) {
   // Not a failure: the schedule starts with the first push, before setup is finished.
   console.log(`::warning::Mailer is not set up yet. Missing secrets: ${missing.join(', ')}. See the README.`);
   process.exit(0);
 }
 
-const user = env.GMAIL_USER.trim();
+// One mailbox: GMAIL_USER/GMAIL_APP_PASSWORD, as before. Several: GMAIL_ACCOUNTS holds all of
+// them as JSON, and the workflow's matrix picks one by MAILBOX_INDEX for this particular job.
+// See the README for how the workflow builds that matrix from the same secret.
+function account() {
+  if (env.GMAIL_ACCOUNTS?.trim()) {
+    const accounts = JSON.parse(env.GMAIL_ACCOUNTS);
+    const index = Number(env.MAILBOX_INDEX ?? 0);
+    const picked = accounts[index];
+    if (!picked?.user || !picked?.app_password) throw new Error(`GMAIL_ACCOUNTS has no usable entry at index ${index}.`);
+    return picked;
+  }
+  if (env.GMAIL_USER?.trim() && env.GMAIL_APP_PASSWORD?.trim()) return { user: env.GMAIL_USER, app_password: env.GMAIL_APP_PASSWORD };
+  return null;
+}
+
+let picked;
+try {
+  picked = account();
+} catch (error) {
+  console.log(`::warning::Mailer is not set up yet. ${error.message} See the README.`);
+  process.exit(0);
+}
+if (!picked) {
+  console.log('::warning::Mailer is not set up yet. Missing secrets: GMAIL_USER, GMAIL_APP_PASSWORD (or GMAIL_ACCOUNTS). See the README.');
+  process.exit(0);
+}
+
+const user = picked.user.trim();
 // Google shows app passwords in four groups separated by spaces.
-const auth = { user, pass: env.GMAIL_APP_PASSWORD.replace(/\s+/g, '') };
+const auth = { user, pass: picked.app_password.replace(/\s+/g, '') };
 // The defaults are Gmail's. Another mailbox works by setting SMTP_HOST and IMAP_HOST.
 const smtpPort = Number(env.SMTP_PORT) || 465;
 const smtp = { host: env.SMTP_HOST || 'smtp.gmail.com', port: smtpPort, secure: smtpPort === 465, auth };

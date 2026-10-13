@@ -66,3 +66,35 @@ test('a database from the first version learns who was already emailed', async (
   const tables = sqlite.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'attachment%' ORDER BY name`).all();
   assert.deepEqual(tables.map((row) => row.name), ['attachment_parts', 'attachments']);
 });
+
+test('a database with one mailbox worth of history gets that mailbox, carried over', async () => {
+  const sqlite = new DatabaseSync(':memory:');
+  for (const version of MIGRATIONS.slice(0, 5)) for (const sql of version) sqlite.exec(sql);
+  const insertSetting = sqlite.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
+  insertSetting.run('schema_version', '5');
+  insertSetting.run('sender_email', JSON.stringify('sam@gmail.com'));
+  insertSetting.run('settings', JSON.stringify({ sender_name: 'Sam Road', batch_size: 7, delay_seconds: 20, daily_limit: 60 }));
+  sqlite.exec(`INSERT INTO campaigns (id, name, created_at) VALUES (1, 'Old campaign', 'x'), (2, 'Another one', 'y')`);
+
+  await ready(d1(sqlite));
+
+  const mailboxes = sqlite
+    .prepare('SELECT email, name, sender_name, batch_size, delay_seconds, daily_limit, status FROM mailboxes')
+    .all()
+    .map((row) => ({ ...row }));
+  assert.deepEqual(mailboxes, [
+    { email: 'sam@gmail.com', name: 'sam@gmail.com', sender_name: 'Sam Road', batch_size: 7, delay_seconds: 20, daily_limit: 60, status: 'active' },
+  ]);
+  const campaigns = sqlite.prepare('SELECT id, mailbox_id FROM campaigns ORDER BY id').all().map((row) => ({ ...row }));
+  assert.deepEqual(campaigns, [{ id: 1, mailbox_id: 1 }, { id: 2, mailbox_id: 1 }]);
+});
+
+test('a fresh database with no history yet gets no mailbox — the first run adds one', async () => {
+  const sqlite = new DatabaseSync(':memory:');
+  for (const version of MIGRATIONS.slice(0, 5)) for (const sql of version) sqlite.exec(sql);
+  sqlite.exec(`INSERT INTO settings (key, value) VALUES ('schema_version', '5')`);
+
+  await ready(d1(sqlite));
+
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM mailboxes').get().n, 0);
+});

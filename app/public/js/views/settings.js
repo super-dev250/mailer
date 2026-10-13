@@ -1,6 +1,5 @@
 import { computed, reactive, ref } from '/vendor/vue.js';
 import { api, refreshOverview } from '../api.js';
-import { ago, count } from '../format.js';
 import { problem, store, toast } from '../store.js';
 
 export const SettingsView = {
@@ -21,18 +20,12 @@ export const SettingsView = {
       busy.value = false;
     }
 
-    // What the pace settings add up to, in plain numbers.
-    const pace = computed(() => {
-      const minutes = Math.max(1, Math.round((form.batch_size * form.delay_seconds) / 60));
-      const runsPerDay = Math.floor(1440 / Math.max(5, form.run_every_minutes));
-      const perDay = Math.min(form.daily_limit, form.batch_size * runsPerDay);
-      const every = form.run_every_minutes >= 60 ? `${Math.round(form.run_every_minutes / 60)} h` : `${form.run_every_minutes} min`;
-      return `One run sends up to ${count(form.batch_size)} emails in about ${minutes} min. With a run every ${every} that is up to ${count(perDay)} emails a day.`;
-    });
     const github = computed(() => store.overview.github);
     const workflowUrl = computed(() => `https://github.com/${github.value.repo}/actions/workflows/mailer.yml`);
+    const mailboxes = computed(() => store.overview.mailboxes);
+    const failing = computed(() => mailboxes.value.filter((mailbox) => mailbox.last_run?.error));
 
-    return { form, busy, save, pace, github, workflowUrl, store, ago };
+    return { form, busy, save, github, workflowUrl, mailboxes, failing, store };
   },
   template: `
     <div class="page-head">
@@ -43,16 +36,13 @@ export const SettingsView = {
     </div>
 
     <div class="stack" style="max-width: 720px">
+      <div class="notice">
+        <Icon name="info" />
+        <span>Sender name and sending pace moved to <a href="#/mailboxes">Mailboxes</a> — one per Gmail account, so adding a second account never affects the first.</span>
+      </div>
+
       <div class="card pad stack">
-        <h2>Sender</h2>
-        <div class="field">
-          <label for="sender-name">Your name</label>
-          <input id="sender-name" type="text" v-model="form.sender_name" maxlength="100" placeholder="Sam Road">
-          <span class="hint">
-            Shown as the sender.
-            <template v-if="store.overview.sender_email">Emails go out from <b>{{ store.overview.sender_email }}</b>, the mailbox set in the GMAIL_USER secret.</template>
-          </span>
-        </div>
+        <h2>Email footer</h2>
         <label class="check">
           <input type="checkbox" v-model="form.footer">
           <span>
@@ -74,40 +64,6 @@ export const SettingsView = {
       </div>
 
       <div class="card pad stack">
-        <h2>Sending pace</h2>
-        <div class="field-row">
-          <div class="field">
-            <label for="batch-size">Emails per run</label>
-            <input id="batch-size" type="number" v-model.number="form.batch_size" min="1" max="500">
-          </div>
-          <div class="field">
-            <label for="delay-seconds">Seconds between emails</label>
-            <input id="delay-seconds" type="number" v-model.number="form.delay_seconds" min="1" max="120">
-          </div>
-          <div class="field">
-            <label for="daily-limit">Most emails in 24 hours</label>
-            <input id="daily-limit" type="number" v-model.number="form.daily_limit" min="1" max="2000">
-          </div>
-          <div class="field">
-            <label for="run-every">Minutes between runs</label>
-            <input id="run-every" type="number" v-model.number="form.run_every_minutes" min="5" max="1440" step="5">
-            <span class="hint">Needs the optional DISPATCH_TOKEN secret to take effect reliably; see Automation below.</span>
-          </div>
-        </div>
-        <p class="muted">{{ pace }} Gmail itself stops a personal account at about 500 a day, and a slow, steady pace is what keeps a mailbox in good standing.</p>
-        <div class="notice">
-          <Icon name="info" />
-          <span>
-            <b>A safe pace for a mailbox with no sending history</b> (true for most Gmail accounts, and especially for email addresses found rather than collected with consent):
-            start around <b>20&ndash;40 emails a day</b>, in small batches of <b>3&ndash;5 per run</b> spread across the day rather than sent all at once,
-            with at least <b>30&ndash;60 seconds</b> between individual emails. After a week or two without bounces or complaints, raise the daily total gradually
-            &mdash; doubling it every week or so (e.g. 40 &rarr; 75 &rarr; 150) &mdash; rather than jumping straight to a high number. Going from 0 to hundreds a day
-            overnight is the single most common reason a new mailbox lands in spam.
-          </span>
-        </div>
-      </div>
-
-      <div class="card pad stack">
         <h2>Tracking</h2>
         <label class="check">
           <input type="checkbox" v-model="form.track_opens">
@@ -121,14 +77,17 @@ export const SettingsView = {
 
       <div class="card pad stack">
         <h2>Automation</h2>
-        <p v-if="store.overview.last_run">
-          The Mailer workflow last ran {{ ago(store.overview.last_run.at) }}.
-          Sent: {{ store.overview.last_run.sent }} · Failed: {{ store.overview.last_run.failed }} ·
-          Replies found: {{ store.overview.last_run.replies }} · Bounces found: {{ store.overview.last_run.bounces }}
+        <div class="field" style="max-width: 220px">
+          <label for="run-every">Minutes between runs</label>
+          <input id="run-every" type="number" v-model.number="form.run_every_minutes" min="5" max="1440" step="5">
+          <span class="hint">Applies to every mailbox. Needs the optional DISPATCH_TOKEN secret to take effect reliably — see below.</span>
+        </div>
+        <p v-if="mailboxes.length" class="muted">
+          {{ mailboxes.length }} mailbox{{ mailboxes.length === 1 ? '' : 'es' }} configured. Pace and run history are on the <a href="#/mailboxes">Mailboxes</a> page.
         </p>
         <p v-else class="muted">The Mailer workflow has not reported here yet. It runs once the GitHub secrets are in place.</p>
-        <div v-if="store.overview.last_run && store.overview.last_run.error" class="notice problem">
-          <Icon name="alert" /> <span>{{ store.overview.last_run.error }}</span>
+        <div v-for="mailbox in failing" :key="mailbox.id" class="notice problem">
+          <Icon name="alert" /> <span><b>{{ mailbox.name }}:</b> {{ mailbox.last_run.error }}</span>
         </div>
         <p v-if="!github.can_dispatch" class="muted">
           Without the optional DISPATCH_TOKEN secret, sending only happens when GitHub's own schedule in the workflow fires — which GitHub documents as best-effort and can silently stop working — or when you run it by hand on GitHub. Add DISPATCH_TOKEN (see the README) so this app reliably starts a run itself, on the "Minutes between runs" interval above, through Cloudflare's own scheduler instead.

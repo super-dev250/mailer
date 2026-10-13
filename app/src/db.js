@@ -107,20 +107,51 @@ export const MIGRATIONS = [
   // 5: a campaign can cap how many of its available contacts to queue, instead of always
   // queuing everyone, so a very large list can be sent to in planned batches over several campaigns.
   ['ALTER TABLE campaigns ADD COLUMN send_limit INTEGER'],
+  // 6: send from more than one Gmail account, to spread volume and protect any single account's
+  // reputation. Pace (batch size, delay, daily limit) and the sender name move from the single
+  // global `settings` row onto each mailbox; a campaign picks which mailbox sends it.
+  [
+    `CREATE TABLE IF NOT EXISTS mailboxes (
+      id INTEGER PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL DEFAULT '',
+      sender_name TEXT NOT NULL DEFAULT '',
+      batch_size INTEGER NOT NULL DEFAULT 4,
+      delay_seconds INTEGER NOT NULL DEFAULT 40,
+      daily_limit INTEGER NOT NULL DEFAULT 40,
+      status TEXT NOT NULL DEFAULT 'active',
+      last_run TEXT,
+      inbox_cursor TEXT,
+      created_at TEXT NOT NULL
+    )`,
+    'ALTER TABLE campaigns ADD COLUMN mailbox_id INTEGER REFERENCES mailboxes (id) ON DELETE SET NULL',
+    // The mailbox already in use, carried over from the single-mailbox settings it replaces, so
+    // nothing needs reconfiguring after this upgrade.
+    `INSERT INTO mailboxes (email, name, sender_name, batch_size, delay_seconds, daily_limit, status, created_at)
+     SELECT json_extract(sender.value, '$'), json_extract(sender.value, '$'),
+       COALESCE(json_extract(pace.value, '$.sender_name'), ''),
+       COALESCE(json_extract(pace.value, '$.batch_size'), 4),
+       COALESCE(json_extract(pace.value, '$.delay_seconds'), 40),
+       COALESCE(json_extract(pace.value, '$.daily_limit'), 40),
+       'active', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+     FROM settings sender LEFT JOIN settings pace ON pace.key = 'settings'
+     WHERE sender.key = 'sender_email' AND json_extract(sender.value, '$') != ''`,
+    `UPDATE campaigns SET mailbox_id = (SELECT id FROM mailboxes ORDER BY id LIMIT 1)
+     WHERE EXISTS (SELECT 1 FROM mailboxes)`,
+  ],
 ];
 
+// Used when a mailbox is created without its own pace, including the very first time a
+// mailbox is seen (auto-registered by the runner's first claim).
+export const DEFAULT_MAILBOX_PACE = { batch_size: 4, delay_seconds: 40, daily_limit: 40 };
+
+// Everything here applies across every mailbox. Sender name and pace (batch size, delay, daily
+// limit) are per mailbox instead — see the `mailboxes` table and DEFAULT_MAILBOX_PACE above.
 export const DEFAULT_SETTINGS = {
-  sender_name: '',
   // Off: the email ends with the message, like a personal email.
   footer: false,
   postal_address: '',
   unsubscribe_text: 'Unsubscribe',
-  // A cautious starting pace for a mailbox with no sending history: spread across the day rather
-  // than front-loaded into the first couple of runs, and well under Gmail's own 500-a-day cap.
-  // See the Settings page for how to raise this gradually as the mailbox earns a reputation.
-  batch_size: 4,
-  delay_seconds: 40,
-  daily_limit: 40,
   // How often the Worker's own Cloudflare Cron Trigger asks GitHub to run, in minutes. The cron
   // itself fires every 5 minutes (see app/wrangler.json); this is checked on each of those ticks,
   // so the real interval is this value rounded up to the next multiple of 5.
@@ -169,13 +200,21 @@ async function migrate(db) {
   }
 }
 
-let migrated;
+// Keyed by the db object itself (stable for the life of a Worker instance, one real D1 binding)
+// rather than a single module-level flag, so tests that exercise more than one database in the
+// same process each get their own migration run.
+const migrated = new WeakMap();
 
 /** Resolves once the tables exist. Checked once per Worker instance. */
 export function ready(db) {
-  migrated ??= migrate(db).catch((error) => {
-    migrated = undefined;
-    throw error;
-  });
-  return migrated;
+  if (!migrated.has(db)) {
+    migrated.set(
+      db,
+      migrate(db).catch((error) => {
+        migrated.delete(db);
+        throw error;
+      }),
+    );
+  }
+  return migrated.get(db);
 }

@@ -36,6 +36,7 @@ In this repository open **Settings > Secrets and variables > Actions** and add t
 |---|---|
 | `GMAIL_USER` | Your Gmail address |
 | `GMAIL_APP_PASSWORD` | The app password from step 1 |
+| | *(sending from more than one Gmail account instead? See "Send from more than one Gmail account" below — skip these two secrets and use `GMAIL_ACCOUNTS` there instead.)* |
 | `CLOUDFLARE_API_TOKEN` | The token from step 2 |
 | `CLOUDFLARE_ACCOUNT_ID` | The Account ID from step 2 |
 | `APP_SECRET` | A long password you make up. It is your sign-in to the web app. |
@@ -76,6 +77,26 @@ Without this step, emails only go out when GitHub's own `schedule:` trigger in t
 6. In this repository open **Settings > Secrets and variables > Actions > New repository secret**, name it `DISPATCH_TOKEN` and paste the token.
 7. In the Actions tab open **Test and deploy** and press **Run workflow**, so the app receives the token.
 
+### Optional: send from more than one Gmail account
+
+One account is all most people need. Add more to spread volume across them — each has its own
+pace and its own inbox, so one account's size or reputation never affects another's, and if Google
+ever restricts one, the others keep working.
+
+1. Create an app password (step 1 above) for each extra Gmail account.
+2. Add one repository secret, `GMAIL_ACCOUNTS`, holding all of them — including the first — as JSON:
+   ```json
+   [
+     { "user": "you@gmail.com", "app_password": "aaaa bbbb cccc dddd" },
+     { "user": "you.backup@gmail.com", "app_password": "eeee ffff gggg hhhh" }
+   ]
+   ```
+   This replaces `GMAIL_USER` and `GMAIL_APP_PASSWORD` — remove those two secrets, or leave them; once `GMAIL_ACCOUNTS` is set, the workflow uses it instead.
+3. In the app, open **Mailboxes**. The first time the workflow runs after this, each address in `GMAIL_ACCOUNTS` appears there on its own, with a starting pace from the same safe defaults a single mailbox gets. Click **Edit** to rename one or change its pace, or **Add mailbox** to register one before the first run.
+4. Open each new campaign's **Send from** field and choose which mailbox sends it. With only one mailbox this never needs touching; with more than one, every campaign needs a mailbox chosen before it can send a test or start.
+
+The Mailer workflow runs one job per account in `GMAIL_ACCOUNTS`, in parallel, each with its own 30-minute budget — so adding accounts does not slow the others down. `SMTP_HOST` and `IMAP_HOST` (see "Another mailbox" below) apply to every account in `GMAIL_ACCOUNTS` alike; mixing Gmail with a different provider in one setup is not supported.
+
 ### Optional: find GitHub contacts
 
 The **GitHub contacts** page works through GitHub's developers on its own (there is nothing to configure or type) and collects the name, email, login and profile URL of each one. It searches the user base rather than scanning commit history directly, because a raw commit scan keeps re-encountering the same prolific author's many commits while walking through time, burning the scarce search quota without ever surfacing anyone new. Each person costs at most one email lookup: their public profile email first, which is free, and only when that is not set, exactly one commit search — never more than one per person. Only addresses at well-known webmail providers (Gmail, Outlook, Yahoo, iCloud and similar) are kept, since those are real inboxes someone actually reads; corporate, institutional, bot and placeholder addresses are left out. Profiles that list a location in Asia or Africa are left out too — the free profile lookup above already includes this, so it costs nothing extra; it is still only a best-effort filter, since most profiles never set a location at all and an email address itself carries no country information. Anyone already in your contacts is left out too. It needs its own token, because GitHub only allows this kind of search when signed in.
@@ -107,7 +128,7 @@ This only ever covers the one workspace the token belongs to. Searching several 
 ## Using it
 
 1. **Contacts > Import file.** Choose your Excel or CSV file. Check that the right column was recognised as the email address and give the list a name. Every other column is kept and can be used to personalise emails. Each address exists only once in your contacts: before you import, the screen shows which addresses you already have, and those are left out. Capital letters, invisible characters copied from a web page, or a form like `Lee Carter <lee@example.com>` do not make an address count as new. Adding a contact by hand follows the same rule.
-2. **Campaigns > New campaign.** Pick the list, write the subject and the message. **Personalize** inserts fields such as the first name. `{{first_name|there}}` means "the first name, or *there* when it is missing". The image button uploads pictures, and **Button** adds a link styled as a button. **Attach files** adds files that every email carries: up to 5 files, 10 MB in all. Gmail refuses some types, such as `.apk` app installers and `.exe` programs; for those, put the file online and link to it. The preview on the right shows the email filled in for a real contact.
+2. **Campaigns > New campaign.** Pick the list and, in **Send from**, which mailbox sends it — with only one mailbox set up this is already chosen. Write the subject and the message. **Personalize** inserts fields such as the first name. `{{first_name|there}}` means "the first name, or *there* when it is missing". The image button uploads pictures, and **Button** adds a link styled as a button. **Attach files** adds files that every email carries: up to 5 files, 10 MB in all. Gmail refuses some types, such as `.apk` app installers and `.exe` programs; for those, put the file online and link to it. The preview on the right shows the email filled in for a real contact.
 3. **Send test** sends the email to you, so you can read it in a real mailbox first.
 4. **Start sending** queues one email for every contact on the list who has never been emailed by this app and is not already waiting in another campaign. Nobody gets a campaign email twice. Leave **How many to send** blank to queue everyone available, or set a number to send to only part of the list now; the rest stay available, so a second campaign (or a duplicate of this one) can reach them later — useful for easing a large, never-emailed list in gradually rather than queuing it all on day one. From here the content and the audience are locked. To change them, duplicate the campaign.
 5. Open the campaign to follow the results. **Export** downloads them as a CSV file.
@@ -130,13 +151,13 @@ This only ever covers the one workspace the token belongs to. Searching several 
 
 - **Attachments and spam filters.** A file attached to a first email from someone the reader does not know makes spam filters more careful. When a link to the file would do, it is the safer choice.
 - **Opens are an estimate.** Apple Mail loads images by itself, which counts as an open. Mail apps that block images hide real opens. Looking at your own sent copy in Gmail counts too. Replies and clicks are reliable.
-- **Gmail's limits.** A personal Gmail account can send to about 500 recipients a day, and Google restricts accounts that send a lot of unwanted email. The defaults are 25 emails per run and 100 per day. Change them under **Settings > Sending pace**, and raise them slowly.
+- **Gmail's limits.** A personal Gmail account can send to about 500 recipients a day, and Google restricts accounts that send a lot of unwanted email. Each mailbox starts cautiously — a few emails per run, well under 500 a day. Change a mailbox's pace by editing it on the **Mailboxes** page, and raise it slowly; the notice on that page has the detail.
 - **Timing.** The workflow runs once an hour, and GitHub can start scheduled runs several minutes late. Statuses update when a run finishes. To run more often, change the `cron` line in [.github/workflows/mailer.yml](.github/workflows/mailer.yml).
 - **Actions minutes.** In a private repository each run uses about one of the 2,000 free minutes a month, so hourly runs use roughly 720. Public repositories are not charged, but GitHub switches off their scheduled workflows after 60 days without a commit.
 - **GitHub's terms.** GitHub says Actions should not be used for activity unrelated to the software in the repository, and sending marketing email from a workflow is use they could object to. If the workflow is ever disabled, `npm run runner` does the same job from any computer.
 - **Replies and "stop".** Replies show up after the next run, because that is when the mailbox is checked. A reply is recognised when it answers your email, and also when the person writes you a new email instead. Replies to test emails are not counted. When someone asks you to stop, select them on the **Contacts** page and press **Unsubscribe**.
 - **The law.** Emails end with your message alone by default. In the United States, CAN-SPAM asks marketing email to carry a postal address and a way to opt out: turn on **Settings > Add a footer to every email** for both. The EU, the UK and Canada generally require permission before the first email. Whether you may email someone is up to you.
-- **Another mailbox.** The workflow uses Gmail's servers by default. Any mailbox with SMTP and IMAP access works if you set `SMTP_HOST` and `IMAP_HOST` in the `env` block of the workflow file, with that mailbox's login in `GMAIL_USER` and `GMAIL_APP_PASSWORD`.
+- **Another mailbox.** The workflow uses Gmail's servers by default. A mailbox from another provider with SMTP and IMAP access works if you set `SMTP_HOST` and `IMAP_HOST` in the `env` block of `.github/workflows/mailer.yml`, with its login as `GMAIL_USER` and `GMAIL_APP_PASSWORD` (or in `GMAIL_ACCOUNTS` — see "Send from more than one Gmail account" above, though `SMTP_HOST`/`IMAP_HOST` then apply to every account there, not just one).
 
 ## Development
 

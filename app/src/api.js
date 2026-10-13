@@ -3,7 +3,7 @@
 import { PART_BYTES, attachmentProblem, partsFor } from '../public/shared/attachments.js';
 import { cleanEmail, extractLinks, fieldKey } from '../public/shared/email.js';
 import { check } from './http.js';
-import { DEFAULT_SETTINGS, getValues, now, setValue } from './db.js';
+import { DEFAULT_MAILBOX_PACE, DEFAULT_SETTINGS, getValues, now, setValue } from './db.js';
 import { canDispatch, dispatch } from './github.js';
 import { canScrape } from './scrape.js';
 import { canScrape as canScrapeSlack } from './slack.js';
@@ -35,10 +35,20 @@ function parseSendLimit(value) {
   return n;
 }
 
+// null means "not chosen yet" — resolved automatically at send time if there is exactly one
+// mailbox. Whether this id still refers to a real, active mailbox is checked then, not here,
+// the same way a chosen `list` is not checked against existing lists until it matters.
+function parseMailboxId(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Math.round(Number(value));
+  check(Number.isInteger(n) && n > 0, 400, 'That is not a valid mailbox.');
+  return n;
+}
+
 // ---- Overview and settings ----
 
 export async function overview({ db, env }) {
-  const [values, lists] = await Promise.all([
+  const [values, lists, mailboxes] = await Promise.all([
     getValues(db),
     db
       .prepare(
@@ -46,12 +56,17 @@ export async function overview({ db, env }) {
          FROM contacts GROUP BY list ORDER BY list`,
       )
       .all(),
+    db
+      .prepare(
+        `SELECT id, email, name, sender_name, batch_size, delay_seconds, daily_limit, status, last_run, created_at
+         FROM mailboxes ORDER BY id`,
+      )
+      .all(),
   ]);
   return {
     settings: { ...DEFAULT_SETTINGS, ...values.settings },
     lists: lists.results,
-    last_run: values.last_run ?? null,
-    sender_email: values.sender_email ?? '',
+    mailboxes: mailboxes.results.map((row) => ({ ...row, last_run: row.last_run ? JSON.parse(row.last_run) : null })),
     github: { repo: env.GITHUB_REPO ?? '', can_dispatch: canDispatch(env) },
     scraper: { can_scrape: canScrape(env) },
     slack: { can_scrape: canScrapeSlack(env) },
@@ -61,13 +76,9 @@ export async function overview({ db, env }) {
 export async function saveSettings({ db, body }) {
   const input = await body();
   const settings = {
-    sender_name: text(input.sender_name, 100).trim(),
     footer: Boolean(input.footer),
     postal_address: text(input.postal_address, 300).trim(),
     unsubscribe_text: text(input.unsubscribe_text, 100).trim() || DEFAULT_SETTINGS.unsubscribe_text,
-    batch_size: whole(input.batch_size, 1, 500, DEFAULT_SETTINGS.batch_size),
-    delay_seconds: whole(input.delay_seconds, 1, 120, DEFAULT_SETTINGS.delay_seconds),
-    daily_limit: whole(input.daily_limit, 1, 2000, DEFAULT_SETTINGS.daily_limit),
     // The Worker's cron ticks every 5 minutes, so anything finer than that cannot actually happen.
     run_every_minutes: whole(input.run_every_minutes, 5, 1440, DEFAULT_SETTINGS.run_every_minutes),
     track_opens: Boolean(input.track_opens),
@@ -81,6 +92,71 @@ export async function runNow({ env }) {
   check(canDispatch(env), 400, 'Starting a run from here needs the optional DISPATCH_TOKEN secret. See the README.');
   await dispatch(env);
   return { started: true };
+}
+
+// ---- Mailboxes ----
+// Each Gmail account the app can send from: its own pace (so one account's reputation never
+// affects another's) and its own sender name. A campaign sends through exactly one.
+
+const PACE_BOUNDS = { batch_size: [1, 500], delay_seconds: [1, 120], daily_limit: [1, 2000] };
+const mailboxPace = (input, fallback) =>
+  Object.fromEntries(Object.entries(PACE_BOUNDS).map(([key, [min, max]]) => [key, whole(input[key], min, max, fallback[key])]));
+
+export async function createMailbox({ db, body }) {
+  const input = await body();
+  const email = cleanEmail(text(input.email, 300));
+  check(email, 400, 'Enter the Gmail address for this mailbox.');
+  const pace = mailboxPace(input, DEFAULT_MAILBOX_PACE);
+  const row = await db
+    .prepare(
+      `INSERT INTO mailboxes (email, name, sender_name, batch_size, delay_seconds, daily_limit, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'active', ?) RETURNING id`,
+    )
+    .bind(
+      email,
+      text(input.name, 100).trim() || email,
+      text(input.sender_name, 100).trim(),
+      pace.batch_size,
+      pace.delay_seconds,
+      pace.daily_limit,
+      now(),
+    )
+    .first()
+    .catch((error) => {
+      check(!String(error.message).includes('UNIQUE'), 409, 'A mailbox with that address already exists.');
+      throw error;
+    });
+  return { id: row.id };
+}
+
+export async function updateMailbox({ db, params, body }) {
+  const id = idOf(params.id, 'Mailbox');
+  const existing = await db.prepare('SELECT * FROM mailboxes WHERE id = ?').bind(id).first();
+  check(existing, 404, 'Mailbox not found.');
+  const input = await body();
+  const pace = mailboxPace(input, existing);
+  const status = ['active', 'paused'].includes(input.status) ? input.status : existing.status;
+  // Each field is only touched when given, so a Pause/Resume click (which sends just `status`)
+  // leaves the rest exactly as they were.
+  const name = input.name !== undefined ? text(input.name, 100).trim() || existing.email : existing.name;
+  const senderName = input.sender_name !== undefined ? text(input.sender_name, 100).trim() : existing.sender_name;
+  await db
+    .prepare('UPDATE mailboxes SET name = ?, sender_name = ?, batch_size = ?, delay_seconds = ?, daily_limit = ?, status = ? WHERE id = ?')
+    .bind(name, senderName, pace.batch_size, pace.delay_seconds, pace.daily_limit, status, id)
+    .run();
+  return { ok: true };
+}
+
+export async function deleteMailbox({ db, params }) {
+  const id = idOf(params.id, 'Mailbox');
+  const active = await db
+    .prepare(`SELECT 1 FROM campaigns WHERE mailbox_id = ? AND status IN ('sending', 'paused') LIMIT 1`)
+    .bind(id)
+    .first();
+  check(!active, 409, 'This mailbox has a campaign still sending or paused. Finish, pause-and-delete, or reassign it first.');
+  const result = await db.prepare('DELETE FROM mailboxes WHERE id = ?').bind(id).run();
+  check(result.meta.changes, 404, 'Mailbox not found.');
+  return { ok: true };
 }
 
 // ---- Contacts ----
@@ -262,12 +338,32 @@ async function loadAttachments(db, id) {
   return results.map(({ stored, ...file }) => ({ ...file, complete: stored === file.parts }));
 }
 
+// The mailbox a campaign sends from, resolved once: if one was chosen, it must still exist and
+// be active; otherwise, with exactly one mailbox in the whole app, that one is picked automatically
+// and recorded, so a single-mailbox setup never needs to think about this. More than one mailbox
+// (or none at all) needs an explicit choice.
+async function resolveMailbox(db, campaign) {
+  if (campaign.mailbox_id) {
+    const mailbox = await db.prepare('SELECT * FROM mailboxes WHERE id = ?').bind(campaign.mailbox_id).first();
+    check(mailbox, 400, 'The mailbox this campaign sends from no longer exists. Choose another in Mailboxes.');
+    check(mailbox.status === 'active', 400, `The "${mailbox.name}" mailbox is paused. Resume it in Mailboxes, or choose another.`);
+    return mailbox;
+  }
+  const { results } = await db.prepare(`SELECT * FROM mailboxes WHERE status = 'active'`).all();
+  check(results.length > 0, 400, 'Add a mailbox first, in Mailboxes.');
+  check(results.length === 1, 400, 'Choose which mailbox this campaign sends from, in Mailboxes.');
+  await db.prepare('UPDATE campaigns SET mailbox_id = ? WHERE id = ?').bind(results[0].id, campaign.id).run();
+  campaign.mailbox_id = results[0].id;
+  return results[0];
+}
+
 async function checkSendable(db, campaign) {
   check(campaign.subject.trim(), 400, 'Add a subject line first.');
   check(!isBlank(campaign.body_html), 400, 'The email has no content yet.');
   check(!hasInlineImage(campaign.body_html), 400, 'An image is still uploading. Wait a moment and try again.');
   const files = await loadAttachments(db, campaign.id);
   check(files.every((file) => file.complete), 400, 'An attachment did not finish uploading. Remove it and attach it again.');
+  await resolveMailbox(db, campaign);
 }
 
 export async function listCampaigns({ db }) {
@@ -286,8 +382,8 @@ export async function createCampaign({ db, body }) {
   const source = sourceId ? await loadCampaign(db, { id: sourceId }) : null;
   const row = await db
     .prepare(
-      `INSERT INTO campaigns (name, subject, preheader, body_html, list, links, send_limit, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO campaigns (name, subject, preheader, body_html, list, links, send_limit, mailbox_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .bind(
       source ? `${source.name} (copy)` : 'Untitled campaign',
@@ -297,6 +393,7 @@ export async function createCampaign({ db, body }) {
       source?.list ?? '',
       source?.links ?? '[]',
       source?.send_limit ?? null,
+      source?.mailbox_id ?? null,
       now(),
     )
     .first();
@@ -351,12 +448,16 @@ export async function updateCampaign({ db, params, body }) {
   check(canEditContent(campaign.status), 409, LOCKED);
   const input = await body();
   const html = text(input.body_html, 500_000);
-  // The audience, and how many of it to queue, were already fixed when the campaign started:
-  // that happens once, at start, so changing either afterwards would be misleading rather than useful.
+  // The audience, how many of it to queue, and which mailbox sends it were already fixed when the
+  // campaign started: that happens once, at start, so changing any of them afterwards would be
+  // misleading rather than useful.
   const list = campaign.status === 'draft' ? text(input.list, 100) : campaign.list;
   const sendLimit = campaign.status === 'draft' ? parseSendLimit(input.send_limit) : campaign.send_limit;
+  const mailboxId = campaign.status === 'draft' && input.mailbox_id !== undefined ? parseMailboxId(input.mailbox_id) : campaign.mailbox_id;
   await db
-    .prepare('UPDATE campaigns SET name = ?, subject = ?, preheader = ?, body_html = ?, list = ?, links = ?, send_limit = ? WHERE id = ?')
+    .prepare(
+      'UPDATE campaigns SET name = ?, subject = ?, preheader = ?, body_html = ?, list = ?, links = ?, send_limit = ?, mailbox_id = ? WHERE id = ?',
+    )
     .bind(
       text(input.name, 120).trim() || 'Untitled campaign',
       text(input.subject, 300),
@@ -365,6 +466,7 @@ export async function updateCampaign({ db, params, body }) {
       list,
       JSON.stringify(extractLinks(html)),
       sendLimit,
+      mailboxId,
       campaign.id,
     )
     .run();

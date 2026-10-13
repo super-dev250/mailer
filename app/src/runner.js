@@ -2,7 +2,7 @@
 // then record what the runner reports back.
 
 import { check } from './http.js';
-import { DEFAULT_SETTINGS, ago, getValues, now, setValue } from './db.js';
+import { DEFAULT_MAILBOX_PACE, DEFAULT_SETTINGS, ago, getValues, now } from './db.js';
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -12,10 +12,40 @@ const WATCH_INBOX_FOR = 45 * DAY; // how long after sending replies are still lo
 
 const idsOf = (rows, key) => JSON.stringify([...new Set(rows.map((row) => row[key]).filter(Boolean))]);
 
+// Finds (or, the first time this mailbox is ever seen, creates) the mailbox a claim or report
+// belongs to. With no `sender` at all, there must be exactly one mailbox in the whole app for
+// this to resolve — the runner itself always sends its own address, so this only matters for
+// callers that do not (nothing in production; it keeps a single-mailbox setup simple to test).
+async function resolveMailbox(db, sender) {
+  if (sender) {
+    const email = String(sender).trim().toLowerCase();
+    const existing = await db.prepare('SELECT * FROM mailboxes WHERE email = ?').bind(email).first();
+    if (existing) return existing;
+    return db
+      .prepare(
+        `INSERT INTO mailboxes (email, name, sender_name, batch_size, delay_seconds, daily_limit, status, created_at)
+         VALUES (?1, ?1, '', ?2, ?3, ?4, 'active', ?5) RETURNING *`,
+      )
+      .bind(email, DEFAULT_MAILBOX_PACE.batch_size, DEFAULT_MAILBOX_PACE.delay_seconds, DEFAULT_MAILBOX_PACE.daily_limit, now())
+      .first();
+  }
+  const { results } = await db.prepare('SELECT * FROM mailboxes').all();
+  return results.length === 1 ? results[0] : null;
+}
+
 export async function claim({ db, url, body }) {
   const { sender } = await body();
+  const mailbox = await resolveMailbox(db, sender);
+  check(mailbox, 400, 'Which mailbox is this? Pass "sender".');
   const values = await getValues(db);
-  const settings = { ...DEFAULT_SETTINGS, ...values.settings };
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...values.settings,
+    sender_name: mailbox.sender_name,
+    batch_size: mailbox.batch_size,
+    delay_seconds: mailbox.delay_seconds,
+    daily_limit: mailbox.daily_limit,
+  };
 
   const [, , stuck, used, recent] = await db.batch([
     // Never mail someone who unsubscribed, bounced or was deleted after the campaign started,
@@ -30,12 +60,30 @@ export async function claim({ db, url, body }) {
        WHERE status = 'queued' AND is_test = 0
          AND contact_id IN (SELECT id FROM contacts WHERE last_emailed_at IS NOT NULL)`,
     ),
-    db.prepare(`SELECT id, token FROM messages WHERE status = 'sending' AND claimed_at < ? LIMIT 50`).bind(ago(STUCK_AFTER)),
-    db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE status = 'sending' OR sent_at > ?`).bind(ago(DAY)),
-    db.prepare('SELECT 1 FROM messages WHERE sent_at > ? LIMIT 1').bind(ago(WATCH_INBOX_FOR)),
+    // Stuck and recent are scoped to this mailbox: each mailbox's run only ever reports on,
+    // or is paced by, the emails that actually went out through it.
+    db
+      .prepare(
+        `SELECT m.id, m.token FROM messages m JOIN campaigns c ON c.id = m.campaign_id
+         WHERE m.status = 'sending' AND m.claimed_at < ?1 AND c.mailbox_id = ?2 LIMIT 50`,
+      )
+      .bind(ago(STUCK_AFTER), mailbox.id),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM messages m JOIN campaigns c ON c.id = m.campaign_id
+         WHERE c.mailbox_id = ?2 AND (m.status = 'sending' OR m.sent_at > ?1)`,
+      )
+      .bind(ago(DAY), mailbox.id),
+    db
+      .prepare(
+        `SELECT 1 FROM messages m JOIN campaigns c ON c.id = m.campaign_id
+         WHERE c.mailbox_id = ?2 AND m.sent_at > ?1 LIMIT 1`,
+      )
+      .bind(ago(WATCH_INBOX_FOR), mailbox.id),
   ]);
 
-  const room = Math.max(0, Math.min(settings.batch_size, settings.daily_limit - used.results[0].n));
+  // Paused: hand out nothing new, but still look for replies to what this mailbox already sent.
+  const room = mailbox.status === 'active' ? Math.max(0, Math.min(settings.batch_size, settings.daily_limit - used.results[0].n)) : 0;
   const claimed = room
     ? (
         await db
@@ -43,11 +91,11 @@ export async function claim({ db, url, body }) {
             `UPDATE messages SET status = 'sending', claimed_at = ?1
              WHERE id IN (
                SELECT m.id FROM messages m JOIN campaigns c ON c.id = m.campaign_id
-               WHERE m.status = 'queued' AND (m.is_test = 1 OR c.status = 'sending')
+               WHERE m.status = 'queued' AND c.mailbox_id = ?3 AND (m.is_test = 1 OR c.status = 'sending')
                ORDER BY m.is_test DESC, m.id LIMIT ?2)
              RETURNING id, token, email, campaign_id, contact_id, is_test`,
           )
-          .bind(now(), room)
+          .bind(now(), room, mailbox.id)
           .all()
       ).results.sort((a, b) => b.is_test - a.is_test || a.id - b.id)
     : [];
@@ -103,15 +151,16 @@ export async function claim({ db, url, body }) {
     });
   }
 
-  if (sender && sender !== values.sender_email) await setValue(db, 'sender_email', sender).run();
-
   return {
     base_url: url.origin,
     settings,
     campaigns,
     messages,
     stuck: stuck.results,
-    inbox: { watch: recent.results.length > 0 || stuck.results.length > 0, cursor: values.inbox_cursor ?? null },
+    inbox: {
+      watch: mailbox.status === 'active' && (recent.results.length > 0 || stuck.results.length > 0),
+      cursor: mailbox.inbox_cursor ? JSON.parse(mailbox.inbox_cursor) : null,
+    },
   };
 }
 
@@ -155,6 +204,9 @@ export async function report({ db, body }) {
   check(results.length + events.length <= 20, 400, 'Report at most 20 items at a time.');
   const stamp = now();
   const statements = [];
+  // Which mailbox this run was for, so its cursor and summary are saved on it, not shared
+  // globally. Same single-mailbox fallback as claim(): real runs always send `sender`.
+  const mailbox = input.cursor || input.run ? await resolveMailbox(db, input.sender) : null;
 
   for (const result of results) {
     if (result.status === 'sent') {
@@ -233,7 +285,9 @@ export async function report({ db, body }) {
     }
   }
 
-  if (input.cursor) statements.push(setValue(db, 'inbox_cursor', input.cursor));
+  if (input.cursor && mailbox) {
+    statements.push(db.prepare('UPDATE mailboxes SET inbox_cursor = ? WHERE id = ?').bind(JSON.stringify(input.cursor), mailbox.id));
+  }
   if (input.synced) {
     // The inbox was just checked: anything sent a while ago with no bounce counts as delivered.
     statements.push(
@@ -242,7 +296,11 @@ export async function report({ db, body }) {
         .bind(stamp, ago(DELIVERED_AFTER)),
     );
   }
-  if (input.run) statements.push(setValue(db, 'last_run', { ...input.run, at: stamp }));
+  if (input.run && mailbox) {
+    statements.push(
+      db.prepare('UPDATE mailboxes SET last_run = ? WHERE id = ?').bind(JSON.stringify({ ...input.run, at: stamp }), mailbox.id),
+    );
+  }
   statements.push(
     db
       .prepare(

@@ -67,9 +67,8 @@ const quiet = () => {};
 let campaignId;
 
 test('a run sends the queued emails and records each result', async () => {
-  await api('PUT', '/api/settings', {
-    sender_name: 'Sam Road', footer: true, postal_address: '1 Depot Way', batch_size: 10, delay_seconds: 1, daily_limit: 100, track_opens: true, track_clicks: true,
-  });
+  await api('PUT', '/api/settings', { footer: true, postal_address: '1 Depot Way', track_opens: true, track_clicks: true });
+  await api('POST', '/api/mailboxes', { email: USER, name: 'Sam', sender_name: 'Sam Road', batch_size: 10, delay_seconds: 1, daily_limit: 100 });
   await api('POST', '/api/contacts/import', {
     list: 'drivers',
     rows: [
@@ -137,8 +136,9 @@ test('a run sends the queued emails and records each result', async () => {
   assert.deepEqual(statuses, [['kim@example.com', 'active'], ['gone@example.com', 'bounced'], ['lee@example.com', 'active']], 'a refused address is not mailed again');
 
   const overview = await api('GET', '/api/overview');
-  assert.equal(overview.sender_email, USER);
-  assert.deepEqual({ sent: overview.last_run.sent, failed: overview.last_run.failed, error: overview.last_run.error }, { sent: 2, failed: 1, error: '' });
+  const mailbox = overview.mailboxes.find((item) => item.email === USER);
+  assert.ok(mailbox);
+  assert.deepEqual({ sent: mailbox.last_run.sent, failed: mailbox.last_run.failed, error: mailbox.last_run.error }, { sent: 2, failed: 1, error: '' });
 });
 
 test('a later run reports the replies and bounces found in the mailbox', async () => {
@@ -188,7 +188,8 @@ test('when the mailbox refuses the login, nothing is lost and the run reports wh
   });
   assert.equal(summary.sent, 0);
   assert.match(summary.error, /rejected the login.*GMAIL_APP_PASSWORD/);
-  assert.match((await api('GET', '/api/overview')).last_run.error, /rejected the login/);
+  const failedOverview = await api('GET', '/api/overview');
+  assert.match(failedOverview.mailboxes.find((item) => item.email === USER).last_run.error, /rejected the login/);
 
   // Both emails are back in the queue and go out once the login works.
   const before = received.length;

@@ -7,6 +7,7 @@ import { problem, signOut, store, toast } from '../store.js';
 import { CampaignView } from './campaign.js';
 import { CampaignsView } from './campaigns.js';
 import { ContactsView } from './contacts.js';
+import { MailboxesView } from './mailboxes.js';
 import { ScraperView } from './scraper.js';
 import { SettingsView } from './settings.js';
 import { SlackScraperView } from './slackScraper.js';
@@ -14,13 +15,14 @@ import { SlackScraperView } from './slackScraper.js';
 const NAV = [
   { view: 'campaigns', label: 'Campaigns', icon: 'send' },
   { view: 'contacts', label: 'Contacts', icon: 'users' },
+  { view: 'mailboxes', label: 'Mailboxes', icon: 'mail' },
   { view: 'scraper', label: 'GitHub contacts', icon: 'search' },
   { view: 'slack', label: 'Slack contacts', icon: 'search' },
   { view: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
 export const Shell = {
-  components: { CampaignView, CampaignsView, ContactsView, ScraperView, SettingsView, SlackScraperView },
+  components: { CampaignView, CampaignsView, ContactsView, MailboxesView, ScraperView, SettingsView, SlackScraperView },
   setup() {
     const failure = ref('');
     const load = () =>
@@ -32,14 +34,25 @@ export const Shell = {
     // Moving between screens is a natural moment to pick up what the last run did.
     watch(() => store.route, load);
 
+    // One mailbox: its own run, as before. Several: the newest run, and whether any of them
+    // has a problem — the Mailboxes page has the rest, one card per mailbox.
     const run = computed(() => {
-      const last = store.overview.last_run;
-      if (!last) return { title: 'No runs yet', detail: 'Emails go out when the Mailer workflow runs.', dot: 'var(--stage-queued)' };
-      if (last.error) return { title: 'Last run had a problem', detail: last.error, dot: 'var(--critical)' };
-      const parts = [`Sent ${last.sent}`];
-      if (last.replies) parts.push(plural(last.replies, 'reply', 'replies'));
-      if (last.bounces) parts.push(plural(last.bounces, 'bounce'));
-      return { title: `Last run ${ago(last.at)}`, detail: parts.join(' · '), dot: 'var(--good)' };
+      const mailboxes = store.overview.mailboxes;
+      const runs = mailboxes.map((mailbox) => mailbox.last_run).filter(Boolean);
+      if (!runs.length) return { title: 'No runs yet', detail: 'Emails go out when the Mailer workflow runs.', dot: 'var(--stage-queued)' };
+      const failing = mailboxes.find((mailbox) => mailbox.last_run?.error);
+      if (failing) {
+        const detail = mailboxes.length > 1 ? `${failing.name}: ${failing.last_run.error}` : failing.last_run.error;
+        return { title: 'Last run had a problem', detail, dot: 'var(--critical)' };
+      }
+      const last = runs.reduce((newest, run) => (run.at > newest.at ? run : newest));
+      const parts = [`Sent ${runs.reduce((sum, run) => sum + run.sent, 0)}`];
+      const replies = runs.reduce((sum, run) => sum + run.replies, 0);
+      const bounces = runs.reduce((sum, run) => sum + run.bounces, 0);
+      if (replies) parts.push(plural(replies, 'reply', 'replies'));
+      if (bounces) parts.push(plural(bounces, 'bounce'));
+      const title = mailboxes.length > 1 ? `${plural(mailboxes.length, 'mailbox')} · last run ${ago(last.at)}` : `Last run ${ago(last.at)}`;
+      return { title, detail: parts.join(' · '), dot: 'var(--good)' };
     });
     const workflowUrl = computed(() => `https://github.com/${store.overview.github.repo}/actions/workflows/mailer.yml`);
 
@@ -71,6 +84,7 @@ export const Shell = {
         <CampaignView v-if="store.route.view === 'campaigns' && store.route.id" :id="store.route.id" :key="store.route.id" />
         <CampaignsView v-else-if="store.route.view === 'campaigns'" />
         <ContactsView v-else-if="store.route.view === 'contacts'" />
+        <MailboxesView v-else-if="store.route.view === 'mailboxes'" />
         <ScraperView v-else-if="store.route.view === 'scraper'" />
         <SlackScraperView v-else-if="store.route.view === 'slack'" />
         <SettingsView v-else-if="store.route.view === 'settings'" />

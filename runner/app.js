@@ -33,6 +33,7 @@ export function createApp(url, secret) {
     claim: (sender) => post('/api/runner/claim', { sender }),
     match: (emails) => post('/api/runner/match', { emails }),
     part: (id, part) => post('/api/runner/part', { id, part }),
-    report: (body) => post('/api/runner/report', body),
+    // `sender` says which mailbox's cursor/run summary a report belongs to.
+    report: (body, sender) => post('/api/runner/report', { ...body, sender }),
   };
 }

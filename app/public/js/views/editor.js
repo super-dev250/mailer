@@ -29,6 +29,9 @@ export const CampaignEditor = {
       name: props.campaign.name,
       list: props.campaign.list,
       send_limit: props.campaign.send_limit ?? '',
+      // A brand-new draft defaults to the one mailbox there is, exactly like the server does
+      // at send time; with more than one, nothing is chosen until the writer picks one.
+      mailbox_id: props.campaign.mailbox_id ?? (store.overview.mailboxes.length === 1 ? store.overview.mailboxes[0].id : ''),
       subject: props.campaign.subject,
       preheader: props.campaign.preheader,
       body_html: props.campaign.body_html,
@@ -65,6 +68,13 @@ export const CampaignEditor = {
       removeEventListener('beforeunload', warnUnsaved);
       save().catch(problem);
     });
+
+    // ---- Mailbox ----
+    const mailboxes = computed(() => store.overview.mailboxes);
+    // With only one mailbox, that one applies even before form.mailbox_id is actually saved.
+    const selectedMailbox = computed(
+      () => mailboxes.value.find((mailbox) => mailbox.id === form.mailbox_id) ?? (mailboxes.value.length === 1 ? mailboxes.value[0] : null),
+    );
 
     // ---- Audience and personalisation ----
     const lists = computed(() => store.overview.lists.filter((item) => item.list));
@@ -112,8 +122,9 @@ export const CampaignEditor = {
     const preview = ref({ subject: '', html: '' });
     const device = ref('desktop');
     let previewTimer;
+    const previewSettings = computed(() => ({ ...settings.value, sender_name: selectedMailbox.value?.sender_name ?? '' }));
     watchEffect(() => {
-      const rendered = renderEmail({ campaign: { ...form, links: [] }, contact: sample.value, settings: settings.value });
+      const rendered = renderEmail({ campaign: { ...form, links: [] }, contact: sample.value, settings: previewSettings.value });
       clearTimeout(previewTimer);
       previewTimer = setTimeout(() => (preview.value = rendered), 300);
     });
@@ -158,7 +169,7 @@ export const CampaignEditor = {
       files.value = files.value.filter((item) => item !== file);
     }
     const button = reactive({ text: 'Get the app', url: 'https://' });
-    const testEmail = ref(stored('mailer.test') || store.overview.sender_email);
+    const testEmail = ref(stored('mailer.test') || selectedMailbox.value?.email || '');
 
     function openButtonDialog() {
       editor.value.hold();
@@ -217,9 +228,11 @@ export const CampaignEditor = {
     }
 
     const pace = computed(() => {
-      const runs = Math.ceil(queuedCount.value / settings.value.batch_size);
-      const days = Math.ceil(queuedCount.value / settings.value.daily_limit);
-      return `${count(settings.value.batch_size)} per run and at most ${count(settings.value.daily_limit)} a day: about ${plural(runs, 'run')}${days > 1 ? ` over ${days} days` : ''}.`;
+      if (!selectedMailbox.value) return '';
+      const { batch_size: batchSize, daily_limit: dailyLimit } = selectedMailbox.value;
+      const runs = Math.ceil(queuedCount.value / batchSize);
+      const days = Math.ceil(queuedCount.value / dailyLimit);
+      return `${count(batchSize)} per run and at most ${count(dailyLimit)} a day from ${selectedMailbox.value.name}: about ${plural(runs, 'run')}${days > 1 ? ` over ${days} days` : ''}.`;
     });
 
     // act() already saves before running its action, so this just needs to wait for that and leave.
@@ -227,7 +240,7 @@ export const CampaignEditor = {
 
     return {
       files, sendingFiles, attach, formatBytes, detach: (file) => detach(file).catch(problem),
-      form, lists, audienceSize, queuedCount, sample, mergeItems, unknownTags, editor, subjectInput, insertInSubject,
+      form, mailboxes, selectedMailbox, lists, audienceSize, queuedCount, sample, mergeItems, unknownTags, editor, subjectInput, insertInSubject,
       preview, device, dialog, busy, uploading, button, testEmail, pace, settings, store, SAVE_LABELS, saveState,
       openButtonDialog, closeButtonDialog, insertButton, sendTest, start, finishEditing, count, plural,
       remove: () => remove().catch(problem),
@@ -269,6 +282,21 @@ export const CampaignEditor = {
             <span class="hint">
               <template v-if="locked">Set when this campaign started; it cannot be changed now.</template>
               <template v-else>{{ plural(audienceSize, 'contact') }} available. Anyone already emailed, or waiting in another campaign, is left out.</template>
+            </span>
+          </div>
+          <div class="field">
+            <label for="campaign-mailbox">Send from</label>
+            <select id="campaign-mailbox" v-model="form.mailbox_id" :disabled="locked">
+              <option value="" disabled>Choose a mailbox</option>
+              <option v-for="mailbox in mailboxes" :key="mailbox.id" :value="mailbox.id">
+                {{ mailbox.name }}{{ mailbox.status === 'paused' ? ' (paused)' : '' }}
+              </option>
+            </select>
+            <span class="hint">
+              <template v-if="locked">Set when this campaign started; it cannot be changed now.</template>
+              <template v-else-if="!mailboxes.length"><a href="#/mailboxes">Add a mailbox</a> before sending.</template>
+              <template v-else-if="selectedMailbox">{{ selectedMailbox.email }}</template>
+              <template v-else>Which Gmail account sends this.</template>
             </span>
           </div>
           <div class="field">
@@ -340,7 +368,7 @@ export const CampaignEditor = {
         </div>
         <div class="preview-meta">
           <b>{{ preview.subject || 'No subject yet' }}</b>
-          <span class="muted">From {{ settings.sender_name || 'you' }} · to {{ sample.name || sample.email }}</span>
+          <span class="muted">From {{ selectedMailbox ? (selectedMailbox.sender_name || selectedMailbox.email) : 'you' }} · to {{ sample.name || sample.email }}</span>
           <span v-if="files.length" class="muted"><Icon name="paperclip" /> {{ files.map((file) => file.name).join(', ') }}</span>
         </div>
         <div class="preview-stage" :class="device">
@@ -371,11 +399,15 @@ export const CampaignEditor = {
     </Modal>
 
     <Modal v-if="dialog === 'start'" title="Start sending?" @close="dialog = ''">
-      <p>This sends <b>{{ preview.subject || 'this email' }}</b> to <b>{{ plural(queuedCount, 'contact') }}</b> in {{ form.list || 'all your lists' }}{{ form.send_limit && queuedCount < audienceSize ? ' (of ' + count(audienceSize) + ' available)' : '' }}. The content cannot be changed afterwards.</p>
-      <p v-if="queuedCount" class="muted">{{ pace }} You can pause at any time.</p>
-      <div v-if="!settings.sender_name" class="notice">
+      <p>This sends <b>{{ preview.subject || 'this email' }}</b> to <b>{{ plural(queuedCount, 'contact') }}</b> in {{ form.list || 'all your lists' }}{{ form.send_limit && queuedCount < audienceSize ? ' (of ' + count(audienceSize) + ' available)' : '' }}, from <b>{{ selectedMailbox ? selectedMailbox.name : 'no mailbox chosen' }}</b>. The content cannot be changed afterwards.</p>
+      <p v-if="queuedCount && selectedMailbox" class="muted">{{ pace }} You can pause at any time.</p>
+      <div v-if="selectedMailbox && !selectedMailbox.sender_name" class="notice">
         <Icon name="info" />
-        <span>Your name is not set, so the email shows only your address as the sender. <a href="#/settings">Add it in Settings</a>.</span>
+        <span>This mailbox has no sender name set, so the email shows only its address as the sender. <a href="#/mailboxes">Add one in Mailboxes</a>.</span>
+      </div>
+      <div v-if="!selectedMailbox" class="notice problem">
+        <Icon name="alert" />
+        <span>Choose which mailbox this campaign sends from, in "Send from" above.</span>
       </div>
       <div v-if="!audienceSize" class="notice problem">
         <Icon name="alert" />
@@ -383,7 +415,7 @@ export const CampaignEditor = {
       </div>
       <template #foot>
         <button type="button" class="btn" @click="dialog = ''">Cancel</button>
-        <button type="button" class="btn primary" :disabled="busy || uploading || sendingFiles || !audienceSize" @click="start"><Icon name="play" /> Start sending</button>
+        <button type="button" class="btn primary" :disabled="busy || uploading || sendingFiles || !audienceSize || !selectedMailbox" @click="start"><Icon name="play" /> Start sending</button>
       </template>
     </Modal>`,
 };

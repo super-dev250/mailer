@@ -25,6 +25,10 @@ route('GET', '/api/overview', api.overview);
 route('PUT', '/api/settings', api.saveSettings);
 route('POST', '/api/run', api.runNow);
 
+route('POST', '/api/mailboxes', api.createMailbox);
+route('PUT', '/api/mailboxes/:id', api.updateMailbox);
+route('DELETE', '/api/mailboxes/:id', api.deleteMailbox);
+
 route('GET', '/api/contacts', api.listContacts);
 route('POST', '/api/contacts/import', api.importContacts);
 route('POST', '/api/contacts/existing', api.existingContacts);
@@ -116,11 +120,18 @@ export default {
   async scheduled(event, env, context) {
     context.waitUntil(
       ready(env.DB)
-        .then(() => getValues(env.DB))
-        .then(({ settings, last_run }) => {
+        .then(() =>
+          Promise.all([getValues(env.DB), env.DB.prepare(`SELECT last_run FROM mailboxes WHERE status = 'active'`).all()]),
+        )
+        .then(([{ settings }, { results }]) => {
           const minutes = Math.max(5, Number(settings?.run_every_minutes) || DEFAULT_SETTINGS.run_every_minutes);
-          const last = last_run?.at ? new Date(last_run.at).getTime() : 0;
-          if (Date.now() - last >= minutes * 60_000) return dispatch(env);
+          // Due if any active mailbox either has never run, or hasn't run recently enough — the
+          // workflow itself sorts out which mailboxes actually need a turn once it starts.
+          const due = results.length === 0 || results.some((row) => {
+            const at = row.last_run ? JSON.parse(row.last_run).at : null;
+            return Date.now() - (at ? new Date(at).getTime() : 0) >= minutes * 60_000;
+          });
+          if (due) return dispatch(env);
         })
         .catch((error) => console.error(error)),
     );

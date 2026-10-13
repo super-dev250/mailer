@@ -139,9 +139,14 @@ export const CampaignReport = {
       const query = props.campaign.list ? `&list=${encodeURIComponent(props.campaign.list)}` : '';
       const { rows: found } = await api.get(`/api/contacts?limit=1${query}`);
       const contact = found[0] ?? { email: 'driver@example.com', name: 'Alex Driver', fields: {} };
+      const mailbox = store.overview.mailboxes.find((item) => item.id === props.campaign.mailbox_id);
       email.value = {
         to: contact.name || contact.email,
-        html: renderEmail({ campaign: props.campaign, contact, settings: store.overview.settings }).html,
+        html: renderEmail({
+          campaign: props.campaign,
+          contact,
+          settings: { ...store.overview.settings, sender_name: mailbox?.sender_name ?? '' },
+        }).html,
       };
     }
 
@@ -192,9 +197,12 @@ export const CampaignReport = {
 
     const badge = (row) => STAGES[stageOf(row)];
     const detail = (row) => row.reply_snippet || (row.status === 'sent' ? '' : row.error) || '';
+    const mailboxName = computed(
+      () => store.overview.mailboxes.find((item) => item.id === props.campaign.mailbox_id)?.name ?? '',
+    );
 
     return {
-      FILTERS, PAGE_SIZE, CAMPAIGN_STATUS, filter, search, offset, rows, total, busy, tiles, rateTiles, linkStats, bounceWarning, openWarning, email,
+      FILTERS, PAGE_SIZE, CAMPAIGN_STATUS, filter, search, offset, rows, total, busy, tiles, rateTiles, linkStats, bounceWarning, openWarning, email, mailboxName,
       refresh, pause, resume, duplicate, remove, exportCsv, badge, detail, audienceName, count, percent, when,
       viewEmail: () => viewEmail().catch(problem),
     };
@@ -216,7 +224,7 @@ export const CampaignReport = {
     </div>
 
     <div class="stack">
-      <p class="muted">“{{ campaign.subject }}” · sent to {{ audienceName(campaign.list) }} · started {{ when(campaign.started_at) }}</p>
+      <p class="muted">“{{ campaign.subject }}” · sent to {{ audienceName(campaign.list) }}<template v-if="mailboxName"> from {{ mailboxName }}</template> · started {{ when(campaign.started_at) }}</p>
 
       <div v-if="bounceWarning" class="notice problem">
         <Icon name="alert" />

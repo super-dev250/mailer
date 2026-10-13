@@ -32,6 +32,7 @@ const minutesAgo = (minutes) => new Date(Date.now() - minutes * 60_000).toISOStr
 const BODY = '<p>Hi {{first_name|there}}</p><p><a href="https://app.example.com/get">Get the app</a></p>';
 let campaignId;
 let batch;
+let mailboxId;
 
 test('the API needs the app secret; tracking endpoints do not', async () => {
   assert.equal((await call('GET', '/api/overview', undefined, 'wrong')).status, 401);
@@ -73,6 +74,17 @@ test('a draft can be edited and its links are indexed', async () => {
   assert.deepEqual(campaign.links, ['https://app.example.com/get']);
 });
 
+test('a campaign cannot start or send a test without a mailbox to send from', async () => {
+  const refused = await post(`/api/campaigns/${campaignId}/start`);
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /Add a mailbox first/);
+
+  const created = await post('/api/mailboxes', { email: 'me@gmail.com', name: 'Main' });
+  assert.equal(created.status, 200);
+  mailboxId = created.body.id;
+  assert.equal((await post('/api/mailboxes', { email: 'me@gmail.com' })).status, 409, 'the address is already a mailbox');
+});
+
 test('a campaign without content or contacts cannot start', async () => {
   const empty = (await post('/api/campaigns')).body.id;
   assert.equal((await post(`/api/campaigns/${empty}/start`)).status, 400);
@@ -99,7 +111,7 @@ test('a test email is handed out first, filled in with a real contact', async ()
   await post('/api/runner/report', { results: [{ id: message.id, status: 'sent' }] });
 
   const overview = (await get('/api/overview')).body;
-  assert.equal(overview.sender_email, 'me@gmail.com');
+  assert.equal(overview.mailboxes.find((mailbox) => mailbox.id === mailboxId).email, 'me@gmail.com');
   assert.equal((await get(`/api/campaigns/${campaignId}`)).body.stats.total, 0, 'tests stay out of the statistics');
 });
 
@@ -116,7 +128,7 @@ test('starting queues one email per active contact and locks the content', async
 
 test('the runner gets batches within the batch size and the daily limit', async () => {
   // One test email was already sent today, so a daily limit of 4 leaves room for 3.
-  await call('PUT', '/api/settings', { sender_name: 'Sam', batch_size: 2, delay_seconds: 1, daily_limit: 4, track_opens: true, track_clicks: true });
+  await call('PUT', `/api/mailboxes/${mailboxId}`, { batch_size: 2, delay_seconds: 1, daily_limit: 4 });
 
   batch = (await post('/api/runner/claim')).body.messages;
   assert.deepEqual(batch.map((message) => message.to), ['ann@example.com', 'bo@example.com']);
@@ -153,7 +165,7 @@ test('results from the runner update the statuses', async () => {
   const claim = (await post('/api/runner/claim')).body;
   assert.deepEqual(claim.inbox, { watch: true, cursor: { uidValidity: '1', uid: 7 } });
   assert.deepEqual(claim.messages, [], 'the daily limit still holds');
-  assert.equal((await get('/api/overview')).body.last_run.sent, 2);
+  assert.equal((await get('/api/overview')).body.mailboxes.find((mailbox) => mailbox.id === mailboxId).last_run.sent, 2);
 });
 
 test('opens, clicks and unsubscribes are recorded from the email links', async () => {
@@ -210,7 +222,7 @@ test('replies and bounces found in the inbox are matched to their email', async 
 test('contacts who leave before their turn are skipped, and the campaign finishes', async () => {
   // The run stopped before reaching Cy, so that email goes back to the queue.
   await post('/api/runner/report', { results: [{ id: batch[2].id, status: 'queued' }] });
-  await call('PUT', '/api/settings', { sender_name: 'Sam', batch_size: 10, delay_seconds: 1, daily_limit: 100, track_opens: true, track_clicks: true });
+  await call('PUT', `/api/mailboxes/${mailboxId}`, { batch_size: 10, delay_seconds: 1, daily_limit: 100 });
   const di = (await get('/api/contacts?q=di@')).body.rows[0];
   assert.deepEqual((await post('/api/contacts/delete', { ids: [di.id] })).body, { deleted: 1 });
 
@@ -364,4 +376,86 @@ test('a campaign can cap how many of its available contacts to queue', async () 
   // Once a campaign has started, its cap is fixed, like its audience.
   assert.equal((await call('PUT', `/api/campaigns/${id}`, { send_limit: 5 })).status, 409);
   assert.equal((await get(`/api/campaigns/${id}`)).body.campaign.send_limit, 2);
+});
+
+test('a second mailbox needs an explicit choice, and each mailbox paces and tracks itself', async () => {
+  const second = await post('/api/mailboxes', { email: 'second@gmail.com', name: 'Second', sender_name: 'Second Road', batch_size: 1, delay_seconds: 1, daily_limit: 2 });
+  assert.equal(second.status, 200);
+  const secondId = second.body.id;
+
+  await post('/api/contacts/import', { list: 'multi', rows: [{ email: 'mx1@example.com' }, { email: 'mx2@example.com' }, { email: 'mx3@example.com' }] });
+  const id = (await post('/api/campaigns')).body.id;
+  await call('PUT', `/api/campaigns/${id}`, { name: 'Multi', subject: 'Hi', body_html: '<p>Hi</p>', list: 'multi' });
+
+  // With two mailboxes now, nothing is auto-picked: starting or testing without a choice is refused.
+  const refused = await post(`/api/campaigns/${id}/start`);
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /Choose which mailbox/);
+
+  await call('PUT', `/api/campaigns/${id}`, { name: 'Multi', subject: 'Hi', body_html: '<p>Hi</p>', list: 'multi', mailbox_id: secondId });
+  assert.deepEqual((await post(`/api/campaigns/${id}/start`)).body, { queued: 3, started: false });
+
+  // The first mailbox never sees these messages: they belong to the second.
+  const firstClaim = (await post('/api/runner/claim', { sender: 'me@gmail.com' })).body.messages;
+  assert.ok(!firstClaim.some((message) => message.to.startsWith('mx')), "none of the second mailbox's messages turn up here");
+  const second1 = (await post('/api/runner/claim', { sender: 'second@gmail.com' })).body.messages;
+  assert.deepEqual(second1.map((message) => message.to), ['mx1@example.com'], 'the second mailbox has its own batch size of 1');
+  await post('/api/runner/report', { sender: 'second@gmail.com', results: [{ id: second1[0].id, status: 'sent' }] });
+  const second2 = (await post('/api/runner/claim', { sender: 'second@gmail.com' })).body.messages;
+  assert.deepEqual(second2.map((message) => message.to), ['mx2@example.com'], 'its own daily limit of 2 leaves room for one more');
+  await post('/api/runner/report', { sender: 'second@gmail.com', results: [{ id: second2[0].id, status: 'sent' }] });
+  assert.deepEqual((await post('/api/runner/claim', { sender: 'second@gmail.com' })).body.messages, [], 'now at its daily limit');
+
+  // The first mailbox's own batch size (2) and daily limit (4, with none used yet) are unaffected.
+  await post('/api/contacts/import', { list: 'drivers2', rows: [{ email: 'd1@example.com' }, { email: 'd2@example.com' }] });
+  const firstCampaign = (await post('/api/campaigns')).body.id;
+  await call('PUT', `/api/campaigns/${firstCampaign}`, { name: 'First', subject: 'Hi', body_html: '<p>Hi</p>', list: 'drivers2', mailbox_id: mailboxId });
+  await post(`/api/campaigns/${firstCampaign}/start`);
+  const first1 = (await post('/api/runner/claim', { sender: 'me@gmail.com' })).body.messages;
+  assert.deepEqual(first1.map((message) => message.to), ['d1@example.com', 'd2@example.com']);
+
+  // Each mailbox's run summary and inbox cursor are kept apart.
+  const firstBefore = (await get('/api/overview')).body.mailboxes.find((mailbox) => mailbox.id === mailboxId);
+  await post('/api/runner/report', { sender: 'second@gmail.com', cursor: { uid: 99 }, run: { sent: 55, failed: 0, replies: 0, bounces: 0 } });
+  const overview = (await get('/api/overview')).body;
+  const secondMailbox = overview.mailboxes.find((mailbox) => mailbox.id === secondId);
+  assert.equal(secondMailbox.last_run.sent, 55);
+  assert.deepEqual(
+    overview.mailboxes.find((mailbox) => mailbox.id === mailboxId),
+    firstBefore,
+    "the first mailbox's own run summary was not touched by the second mailbox's report",
+  );
+  const claimAsSecond = (await post('/api/runner/claim', { sender: 'second@gmail.com' })).body;
+  assert.equal(claimAsSecond.inbox.cursor.uid, 99);
+
+  // Pausing a mailbox refuses even a test through it, and leaves the other mailbox untouched.
+  // Pause/resume only ever sends `status`, so the rest must survive untouched.
+  await call('PUT', `/api/mailboxes/${secondId}`, { status: 'paused' });
+  const pausedMailbox = (await get('/api/overview')).body.mailboxes.find((mailbox) => mailbox.id === secondId);
+  assert.deepEqual(
+    { name: pausedMailbox.name, sender_name: pausedMailbox.sender_name, batch_size: pausedMailbox.batch_size },
+    { name: 'Second', sender_name: 'Second Road', batch_size: 1 },
+  );
+  const refusedTest = await post(`/api/campaigns/${id}/test`, { email: 'me@example.com' });
+  assert.equal(refusedTest.status, 400);
+  assert.match(refusedTest.body.error, /"Second" mailbox is paused/);
+  assert.deepEqual((await post('/api/runner/claim', { sender: 'second@gmail.com' })).body.messages, [], 'a paused mailbox hands out nothing');
+  assert.equal((await post(`/api/campaigns/${firstCampaign}/test`, { email: 'me@example.com' })).status, 200, 'the other mailbox is unaffected');
+
+  // A mailbox cannot be deleted while a campaign is still sending through it.
+  const blocked = await call('DELETE', `/api/mailboxes/${secondId}`);
+  assert.equal(blocked.status, 409);
+});
+
+test('deleting a mailbox clears it from draft campaigns but keeps their results', async () => {
+  const doomed = await post('/api/mailboxes', { email: 'doomed@gmail.com', name: 'Doomed' });
+  const doomedId = doomed.body.id;
+  const draft = (await post('/api/campaigns')).body.id;
+  await call('PUT', `/api/campaigns/${draft}`, { mailbox_id: doomedId });
+  assert.equal((await get(`/api/campaigns/${draft}`)).body.campaign.mailbox_id, doomedId);
+
+  assert.equal((await call('DELETE', `/api/mailboxes/${doomedId}`)).status, 200);
+  assert.equal((await get(`/api/campaigns/${draft}`)).body.campaign.mailbox_id, null);
+  assert.equal((await call('DELETE', `/api/mailboxes/${doomedId}`)).status, 404);
+  await call('DELETE', `/api/campaigns/${draft}`);
 });

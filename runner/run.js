@@ -30,6 +30,7 @@ const chunks = (items, size) =>
 export async function run({ app, mailer, checkInbox, user, log = console.log, pause = sleep }) {
   const startedAt = Date.now();
   const summary = { sent: 0, failed: 0, replies: 0, bounces: 0, error: '' };
+  const report = (body) => app.report(body, user);
   const work = await app.claim(user);
   const delay = work.settings.delay_seconds * 1000;
 
@@ -64,14 +65,14 @@ export async function run({ app, mailer, checkInbox, user, log = console.log, pa
       queue.shift();
       // Reported one by one: if the run dies, at most one email is left in an unknown state.
       if (failure) {
-        await app.report({
+        await report({
           results: [{ id: message.id, status: 'failed', error: failure.reason, bad_address: failure.badAddress }],
         });
         summary.failed++;
         // The reason can quote the recipient's address, so it goes to the report, not the log.
         log(`Email #${message.id} was refused. The campaign report shows why.`);
       } else {
-        await app.report({ results: [{ id: message.id, status: 'sent', at: new Date().toISOString() }] });
+        await report({ results: [{ id: message.id, status: 'sent', at: new Date().toISOString() }] });
         summary.sent++;
         log(`Email #${message.id} sent.`);
         // An uneven rhythm looks less like a machine.
@@ -83,7 +84,7 @@ export async function run({ app, mailer, checkInbox, user, log = console.log, pa
   }
   // Whatever was not attempted goes back to the queue for the next run.
   for (const group of chunks(queue, REPORT_SIZE)) {
-    await app.report({ results: group.map(({ id }) => ({ id, status: 'queued' })) });
+    await report({ results: group.map(({ id }) => ({ id, status: 'queued' })) });
   }
 
   let checked = {};
@@ -96,8 +97,8 @@ export async function run({ app, mailer, checkInbox, user, log = console.log, pa
         return matched;
       };
       const found = await checkInbox({ cursor: work.inbox.cursor, stuck: work.stuck, matchSenders });
-      for (const group of chunks(found.reconciled, REPORT_SIZE)) await app.report({ results: group });
-      for (const group of chunks(found.events, REPORT_SIZE)) await app.report({ events: group });
+      for (const group of chunks(found.reconciled, REPORT_SIZE)) await report({ results: group });
+      for (const group of chunks(found.events, REPORT_SIZE)) await report({ events: group });
       summary.replies = found.events.filter((event) => event.type === 'reply').length;
       summary.bounces = found.events.filter((event) => event.type === 'bounce').length;
       checked = { cursor: found.cursor, synced: true };
@@ -108,6 +109,6 @@ export async function run({ app, mailer, checkInbox, user, log = console.log, pa
     }
   }
 
-  await app.report({ ...checked, run: summary });
+  await report({ ...checked, run: summary });
   return summary;
 }
