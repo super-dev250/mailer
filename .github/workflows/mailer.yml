@@ -31,13 +31,18 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-      # Only ever outputs how many accounts are configured (e.g. [0,1]), never the secrets themselves.
-      - id: list
-        run: echo "indexes=$(node scripts/mailbox-matrix.mjs)" >> "$GITHUB_OUTPUT"
+      # Split in two: GitHub Actions silently blanks *any* $GITHUB_OUTPUT written by a step whose
+      # own env holds a secret — regardless of the value, even a harmless list of small numbers —
+      # so the step that can see the secrets writes to a plain file instead, and a separate step
+      # with no secret in its own env reads that file and is the one that sets the output.
+      - name: Count configured mailboxes
+        run: node scripts/mailbox-matrix.mjs > mailbox-indexes.json
         env:
           GMAIL_ACCOUNTS: ${{ secrets.GMAIL_ACCOUNTS }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      - id: list
+        run: echo "indexes=$(cat mailbox-indexes.json)" >> "$GITHUB_OUTPUT"
 
   run:
     name: Send and check
