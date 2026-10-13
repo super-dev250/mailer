@@ -28,6 +28,7 @@ export const CampaignEditor = {
     const form = reactive({
       name: props.campaign.name,
       list: props.campaign.list,
+      send_limit: props.campaign.send_limit ?? '',
       subject: props.campaign.subject,
       preheader: props.campaign.preheader,
       body_html: props.campaign.body_html,
@@ -71,6 +72,12 @@ export const CampaignEditor = {
     const audienceSize = computed(() =>
       store.overview.lists.filter((item) => !form.list || item.list === form.list).reduce((sum, item) => sum + item.available, 0),
     );
+    // What "Start sending" will actually queue: the whole audience, or the cap, whichever is smaller.
+    // Anyone left over stays available, for a later campaign to reach.
+    const queuedCount = computed(() => {
+      const limit = Number(form.send_limit);
+      return form.send_limit !== '' && Number.isInteger(limit) && limit > 0 ? Math.min(limit, audienceSize.value) : audienceSize.value;
+    });
     // Without DISPATCH_TOKEN the app cannot start a run itself.
     const waitHint = ' It goes out with the next hourly run. To send it now, press Run workflow on the Mailer workflow in GitHub.';
     // The preview and the test email are filled in with a real contact from the audience.
@@ -210,8 +217,8 @@ export const CampaignEditor = {
     }
 
     const pace = computed(() => {
-      const runs = Math.ceil(audienceSize.value / settings.value.batch_size);
-      const days = Math.ceil(audienceSize.value / settings.value.daily_limit);
+      const runs = Math.ceil(queuedCount.value / settings.value.batch_size);
+      const days = Math.ceil(queuedCount.value / settings.value.daily_limit);
       return `${count(settings.value.batch_size)} per run and at most ${count(settings.value.daily_limit)} a day: about ${plural(runs, 'run')}${days > 1 ? ` over ${days} days` : ''}.`;
     });
 
@@ -220,7 +227,7 @@ export const CampaignEditor = {
 
     return {
       files, sendingFiles, attach, formatBytes, detach: (file) => detach(file).catch(problem),
-      form, lists, audienceSize, sample, mergeItems, unknownTags, editor, subjectInput, insertInSubject,
+      form, lists, audienceSize, queuedCount, sample, mergeItems, unknownTags, editor, subjectInput, insertInSubject,
       preview, device, dialog, busy, uploading, button, testEmail, pace, settings, store, SAVE_LABELS, saveState,
       openButtonDialog, closeButtonDialog, insertButton, sendTest, start, finishEditing, count, plural,
       remove: () => remove().catch(problem),
@@ -261,7 +268,16 @@ export const CampaignEditor = {
             </select>
             <span class="hint">
               <template v-if="locked">Set when this campaign started; it cannot be changed now.</template>
-              <template v-else>{{ plural(audienceSize, 'contact') }} to email. Anyone already emailed, or waiting in another campaign, is left out.</template>
+              <template v-else>{{ plural(audienceSize, 'contact') }} available. Anyone already emailed, or waiting in another campaign, is left out.</template>
+            </span>
+          </div>
+          <div class="field">
+            <label for="campaign-limit">How many to send</label>
+            <input id="campaign-limit" type="number" v-model.number="form.send_limit" min="1" placeholder="All available" :disabled="locked">
+            <span class="hint">
+              <template v-if="locked">Set when this campaign started; it cannot be changed now.</template>
+              <template v-else-if="form.send_limit">{{ plural(queuedCount, 'contact') }} will be queued now; the rest stay available for later campaigns.</template>
+              <template v-else>Leave blank to queue everyone available. Set a number to send to only part of the list now and keep the rest for later.</template>
             </span>
           </div>
         </div>
@@ -355,8 +371,8 @@ export const CampaignEditor = {
     </Modal>
 
     <Modal v-if="dialog === 'start'" title="Start sending?" @close="dialog = ''">
-      <p>This sends <b>{{ preview.subject || 'this email' }}</b> to <b>{{ plural(audienceSize, 'contact') }}</b> in {{ form.list || 'all your lists' }}. The content cannot be changed afterwards.</p>
-      <p v-if="audienceSize" class="muted">{{ pace }} You can pause at any time.</p>
+      <p>This sends <b>{{ preview.subject || 'this email' }}</b> to <b>{{ plural(queuedCount, 'contact') }}</b> in {{ form.list || 'all your lists' }}{{ form.send_limit && queuedCount < audienceSize ? ' (of ' + count(audienceSize) + ' available)' : '' }}. The content cannot be changed afterwards.</p>
+      <p v-if="queuedCount" class="muted">{{ pace }} You can pause at any time.</p>
       <div v-if="!settings.sender_name" class="notice">
         <Icon name="info" />
         <span>Your name is not set, so the email shows only your address as the sender. <a href="#/settings">Add it in Settings</a>.</span>

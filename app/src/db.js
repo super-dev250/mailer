@@ -104,6 +104,9 @@ export const MIGRATIONS = [
     )`,
     'CREATE INDEX IF NOT EXISTS link_clicks_campaign ON link_clicks (campaign_id, link_index)',
   ],
+  // 5: a campaign can cap how many of its available contacts to queue, instead of always
+  // queuing everyone, so a very large list can be sent to in planned batches over several campaigns.
+  ['ALTER TABLE campaigns ADD COLUMN send_limit INTEGER'],
 ];
 
 export const DEFAULT_SETTINGS = {

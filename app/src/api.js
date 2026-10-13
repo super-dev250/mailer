@@ -27,6 +27,14 @@ const page = (query) => ({
   offset: whole(query.get('offset') ?? 0, 0, Number.MAX_SAFE_INTEGER, 0),
 });
 
+// null means "everyone available"; otherwise a positive whole number of contacts to queue.
+function parseSendLimit(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Math.round(Number(value));
+  check(Number.isInteger(n) && n > 0, 400, 'How many to send must be a positive whole number, or left blank for everyone available.');
+  return n;
+}
+
 // ---- Overview and settings ----
 
 export async function overview({ db, env }) {
@@ -278,8 +286,8 @@ export async function createCampaign({ db, body }) {
   const source = sourceId ? await loadCampaign(db, { id: sourceId }) : null;
   const row = await db
     .prepare(
-      `INSERT INTO campaigns (name, subject, preheader, body_html, list, links, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+      `INSERT INTO campaigns (name, subject, preheader, body_html, list, links, send_limit, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     )
     .bind(
       source ? `${source.name} (copy)` : 'Untitled campaign',
@@ -288,6 +296,7 @@ export async function createCampaign({ db, body }) {
       source?.body_html ?? '',
       source?.list ?? '',
       source?.links ?? '[]',
+      source?.send_limit ?? null,
       now(),
     )
     .first();
@@ -342,11 +351,12 @@ export async function updateCampaign({ db, params, body }) {
   check(canEditContent(campaign.status), 409, LOCKED);
   const input = await body();
   const html = text(input.body_html, 500_000);
-  // The audience was already fixed when the campaign started: who gets queued happens once, at
-  // start, so changing it afterwards would be misleading rather than useful.
+  // The audience, and how many of it to queue, were already fixed when the campaign started:
+  // that happens once, at start, so changing either afterwards would be misleading rather than useful.
   const list = campaign.status === 'draft' ? text(input.list, 100) : campaign.list;
+  const sendLimit = campaign.status === 'draft' ? parseSendLimit(input.send_limit) : campaign.send_limit;
   await db
-    .prepare('UPDATE campaigns SET name = ?, subject = ?, preheader = ?, body_html = ?, list = ?, links = ? WHERE id = ?')
+    .prepare('UPDATE campaigns SET name = ?, subject = ?, preheader = ?, body_html = ?, list = ?, links = ?, send_limit = ? WHERE id = ?')
     .bind(
       text(input.name, 120).trim() || 'Untitled campaign',
       text(input.subject, 300),
@@ -354,6 +364,7 @@ export async function updateCampaign({ db, params, body }) {
       html,
       list,
       JSON.stringify(extractLinks(html)),
+      sendLimit,
       campaign.id,
     )
     .run();
@@ -379,6 +390,9 @@ export async function startCampaign({ db, env, params }) {
   const audience = `(?1 = '' OR list = ?1) AND ${AVAILABLE}`;
   const size = await db.prepare(`SELECT COUNT(*) AS n FROM contacts WHERE ${audience}`).bind(campaign.list).first('n');
   check(size > 0, 400, 'Everyone in this audience has already been emailed, or is waiting in another campaign.');
+  // A cap queues only the first part of the audience (oldest contacts first); the rest stays
+  // available, for this campaign's content to be duplicated into a later one, or for other campaigns.
+  const queued = campaign.send_limit ? Math.min(campaign.send_limit, size) : size;
 
   const stamp = now();
   await db.batch([
@@ -386,11 +400,11 @@ export async function startCampaign({ db, env, params }) {
     db
       .prepare(
         `INSERT INTO messages (campaign_id, contact_id, email, token, queued_at)
-         SELECT ?2, id, email, lower(hex(randomblob(12))), ?3 FROM contacts WHERE ${audience} ORDER BY id`,
+         SELECT ?2, id, email, lower(hex(randomblob(12))), ?3 FROM contacts WHERE ${audience} ORDER BY id LIMIT ?4`,
       )
-      .bind(campaign.list, campaign.id, stamp),
+      .bind(campaign.list, campaign.id, stamp, queued),
   ]);
-  return { queued: size, started: await dispatch(env).catch(() => false) };
+  return { queued, started: await dispatch(env).catch(() => false) };
 }
 
 const changeStatus = (from, to) => async ({ db, env, params }) => {

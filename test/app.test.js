@@ -330,3 +330,38 @@ test('files are attached in parts, copied with the campaign and handed to the ru
   assert.equal((await call('DELETE', `/api/campaigns/${id}`)).status, 200);
   assert.equal((await post('/api/runner/part', { id: fileId, part: 0 })).status, 404);
 });
+
+test('a campaign can cap how many of its available contacts to queue', async () => {
+  await post('/api/contacts/import', {
+    list: 'big-list',
+    rows: [{ email: 'a1@example.com' }, { email: 'a2@example.com' }, { email: 'a3@example.com' }, { email: 'a4@example.com' }, { email: 'a5@example.com' }],
+  });
+
+  const id = (await post('/api/campaigns')).body.id;
+  await call('PUT', `/api/campaigns/${id}`, { name: 'Batch 1', subject: 'Hi', body_html: '<p>Hi</p>', list: 'big-list', send_limit: 2 });
+  assert.equal((await get(`/api/campaigns/${id}`)).body.campaign.send_limit, 2);
+
+  assert.equal((await call('PUT', `/api/campaigns/${id}`, { send_limit: 0 })).status, 400);
+  assert.equal((await call('PUT', `/api/campaigns/${id}`, { send_limit: -3 })).status, 400);
+  assert.equal((await call('PUT', `/api/campaigns/${id}`, { send_limit: 'lots' })).status, 400);
+
+  const started = await post(`/api/campaigns/${id}/start`);
+  assert.deepEqual(started.body, { queued: 2, started: false });
+  const { rows } = (await get(`/api/campaigns/${id}/messages`)).body;
+  assert.deepEqual(rows.map((row) => row.email), ['a1@example.com', 'a2@example.com']);
+
+  // The other 3 contacts on the list were never queued, so they stay available for another campaign.
+  assert.equal((await get('/api/overview')).body.lists.find((item) => item.list === 'big-list').available, 3);
+  const second = (await post('/api/campaigns')).body.id;
+  await call('PUT', `/api/campaigns/${second}`, { name: 'Batch 2', subject: 'Hi', body_html: '<p>Hi</p>', list: 'big-list', send_limit: 100 });
+  const startedSecond = await post(`/api/campaigns/${second}/start`);
+  assert.deepEqual(startedSecond.body, { queued: 3, started: false }, 'a cap larger than what is left just takes everyone left');
+
+  // A copy keeps the same cap.
+  const copy = (await post('/api/campaigns', { copy_of: id })).body.id;
+  assert.equal((await get(`/api/campaigns/${copy}`)).body.campaign.send_limit, 2);
+
+  // Once a campaign has started, its cap is fixed, like its audience.
+  assert.equal((await call('PUT', `/api/campaigns/${id}`, { send_limit: 5 })).status, 409);
+  assert.equal((await get(`/api/campaigns/${id}`)).body.campaign.send_limit, 2);
+});
