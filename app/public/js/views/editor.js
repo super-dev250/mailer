@@ -276,8 +276,8 @@ export const CampaignEditor = {
             <input id="campaign-limit" type="number" v-model.number="form.send_limit" min="1" placeholder="All available" :disabled="locked">
             <span class="hint">
               <template v-if="locked">Set when this campaign started; it cannot be changed now.</template>
-              <template v-else-if="form.send_limit">{{ plural(queuedCount, 'contact') }} will be queued now; the rest stay available for later campaigns.</template>
-              <template v-else>Leave blank to queue everyone available. Set a number to send to only part of the list now and keep the rest for later.</template>
+              <template v-else-if="form.send_limit">When you start sending, {{ plural(queuedCount, 'contact') }} will be queued. The rest are not reserved — they stay available until then, for any campaign.</template>
+              <template v-else>Leave blank to queue everyone available when you start sending. Set a number to send to only part of the list, and keep the rest free for a later campaign.</template>
             </span>
           </div>
         </div>
