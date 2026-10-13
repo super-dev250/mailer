@@ -3,41 +3,11 @@
 // Needs the optional GH_API_TOKEN secret, because GitHub only allows commit search when signed in.
 
 import { cleanEmail } from '../public/shared/email.js';
-import { ALLOWED_DOMAINS, EXCLUDED_LOCATIONS, LOOKS_GENERATED } from './emailFilters.js';
+import { ALLOWED_DOMAINS, LOOKS_GENERATED } from './emailFilters.js';
 import { check, HttpError } from './http.js';
 
 const PER_PAGE = 100;
 const MAX_PAGE = 10; // GitHub's search API returns at most 1000 results for one query: 10 pages of 100.
-
-// One Worker invocation gets a limited number of outgoing requests; this leaves headroom for the
-// search request itself plus a safety margin, so a page with unusually many distinct authors
-// degrades to "not all of them checked" instead of failing outright.
-const MAX_LOCATION_LOOKUPS = 40;
-
-async function excludedLocations(env, logins) {
-  const unique = [...new Set(logins)].slice(0, MAX_LOCATION_LOOKUPS);
-  const excluded = new Set();
-  await Promise.all(
-    unique.map(async (login) => {
-      try {
-        const response = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, {
-          headers: {
-            Authorization: `Bearer ${env.GH_API_TOKEN}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-            'User-Agent': 'mailer',
-          },
-        });
-        if (!response.ok) return; // unknown: kept, not excluded
-        const { location } = await response.json();
-        if (location && EXCLUDED_LOCATIONS.test(location)) excluded.add(login);
-      } catch {
-        // Unknown: kept, not excluded.
-      }
-    }),
-  );
-  return excluded;
-}
 
 export const canScrape = (env) => Boolean(env.GH_API_TOKEN);
 
@@ -72,7 +42,7 @@ export async function search({ env, body }) {
   const data = await response.json();
 
   const seen = new Set();
-  let rows = [];
+  const rows = [];
   for (const item of data.items ?? []) {
     const email = cleanEmail(item.commit?.author?.email);
     if (!email || !ALLOWED_DOMAINS.test(email) || LOOKS_GENERATED.test(email.split('@')[0]) || seen.has(email)) continue;
@@ -84,8 +54,6 @@ export async function search({ env, body }) {
       url: item.author?.html_url ?? '',
     });
   }
-  const excluded = await excludedLocations(env, rows.filter((row) => row.login).map((row) => row.login));
-  if (excluded.size) rows = rows.filter((row) => !excluded.has(row.login));
   // GitHub reports the true match count here even though it only lets us page through the first
   // 1000: that is how the caller knows a query needs to be split into narrower ones to get the rest.
   const total = data.total_count ?? 0;
