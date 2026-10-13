@@ -229,6 +229,7 @@ export const ScraperView = {
     function removeRow(email) {
       const index = state.rows.findIndex((row) => row.email === email);
       if (index >= 0) state.rows.splice(index, 1);
+      saveProgress();
     }
 
     // ---- Add to contacts, same rule as everywhere else: nobody is added twice ----
@@ -255,6 +256,11 @@ export const ScraperView = {
           const chunk = await api.post('/api/contacts/import', { list: dialog.listName.trim() || 'GitHub', rows: fresh.slice(start, start + 500) });
           totals.added += chunk.added;
         }
+        // Every address just handled, whether newly added or already a contact, has nothing left
+        // to do here: there is no reason for it to keep taking up space in these results.
+        const handled = new Set(emails);
+        state.rows = state.rows.filter((row) => !handled.has(row.email));
+        saveProgress();
         dialog.result = totals;
         toast(`${plural(totals.added, 'contact')} added.`);
       } catch (error) {
