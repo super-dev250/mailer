@@ -1,14 +1,17 @@
 // Finds the email, name, GitHub login and profile URL of real, reachable people (only well-known
 // webmail providers: Gmail, Outlook, Yahoo and the like — not corporate, institutional or bot
-// addresses) behind every commit on GitHub, then exports the results as CSV or adds them to the
-// contact list, never twice. There is no query to write: under the hood it works through the
-// entire commit history a date range at a time, splitting a range further whenever GitHub's
-// 1000-results-per-query cap is hit, but that is an implementation detail and never shown.
+// addresses) by searching GitHub's user base, not raw commit history: scanning commits directly
+// revisits the same prolific author's commits over and over while walking through time, without
+// ever surfacing anyone new. Each candidate user costs at most one email lookup — their public
+// profile first (free), and only when that is not set, exactly one commit search, never more.
+// There is no query to write: under the hood it works through everyone on GitHub a join-date
+// range at a time, splitting a range further whenever GitHub's 1000-results-per-query cap is hit,
+// but that is an implementation detail and never shown.
 //
 // Progress (what has been found, and what is left to search) is saved as it goes, both in a
 // module-level singleton — so switching to another page and back does not lose it — and in
 // localStorage, so Stop followed by Start later resumes from where it left off instead of
-// starting over from the beginning of GitHub's history every time.
+// starting over from the beginning every time.
 
 import { computed, reactive, ref } from '/vendor/vue.js';
 import { api } from '../api.js';
@@ -24,12 +27,12 @@ import { problem, store, toast } from '../store.js';
 const BASE_DELAY_MS = 4000;
 const MAX_DELAY_MS = 30_000;
 let extraDelay = 0; // added on top of BASE_DELAY_MS, grows on a 429 and decays on success
-// Well before Git or GitHub existed, so this covers everything. Ranges are whole seconds since
-// the epoch, not days: recent history is so dense (easily tens of thousands of commits a day
-// across all of GitHub) that day-sized slices routinely still hold more than GitHub's 1000-match
-// cap, and a slice that cannot be split further just loses whatever did not fit on the first page.
-// Splitting down to the second lets even the busiest moments converge.
-const EARLIEST = Math.floor(Date.UTC(1990, 0, 1) / 1000);
+// GitHub itself launched in 2008; nobody could have joined before that. Ranges are whole seconds
+// since the epoch, not days: recent years have so many new accounts that day-sized slices can
+// still hold more than GitHub's 1000-match cap, and a slice that cannot be split further just
+// loses whatever did not fit on the first page. Splitting down to the second lets even the busiest
+// moments converge.
+const EARLIEST = Math.floor(Date.UTC(2008, 0, 1) / 1000);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -114,7 +117,7 @@ async function pace(data) {
   }
 }
 
-// Collects every page of one query, i.e. one slice of the commit history that GitHub promises
+// Collects every page of one query, i.e. one slice of GitHub's user base that GitHub promises
 // (or is assumed) to hold at most 1000 matches, so the 1000-result cap never loses anything.
 // When a truncated slice can still be split further, this stops after just the first page: the
 // caller is about to re-run it as two finer slices anyway, so paging through it now would be
@@ -164,7 +167,9 @@ async function run() {
     while (ranges.length && !state.stopRequested) {
       const [from, to] = ranges.shift();
       const canSplit = to > from;
-      const query = `author-date:${iso(from)}..${iso(to)}`;
+      // repos:>=1 skips accounts that have never published anything, so every lookup this spends
+      // against the scarce search quota at least has a chance of finding a real commit.
+      const query = `created:${iso(from)}..${iso(to)} repos:>=1`;
       const { truncated } = await collect(query, seen, canSplit);
       if (truncated && canSplit) {
         // More than 1000 commits even in this slice: split it in half by time and try again.
@@ -180,7 +185,7 @@ async function run() {
     if (state.done && state.totalFound === 0) {
       // GitHub reporting zero commits across the whole of history means something went wrong
       // talking to it, not that the search genuinely found nothing.
-      problem(new Error('GitHub reported no commits at all, which usually means a problem talking to it rather than an empty result. Check GH_API_TOKEN and try again.'));
+      problem(new Error('GitHub reported no accounts at all, which usually means a problem talking to it rather than an empty result. Check GH_API_TOKEN and try again.'));
     }
   } catch (error) {
     problem(error);
@@ -279,7 +284,7 @@ export const ScraperView = {
       <div class="card pad">
         <div style="display: flex; align-items: center; gap: 16px">
           <p class="muted" style="margin: 0; flex: 1">
-            Works through GitHub's entire commit history on its own, collecting the email each commit was made with — only real, reachable addresses from well-known providers like Gmail, Outlook and Yahoo — and skipping anyone already in your contacts. Keeps running while you visit other pages. Stop and Start again picks up right where it left off.
+            Works through GitHub's developers on its own, resolving each one to their email — only real, reachable addresses from well-known providers like Gmail, Outlook and Yahoo — and skipping anyone already in your contacts. Keeps running while you visit other pages. Stop and Start again picks up right where it left off.
           </p>
           <button v-if="!state.running" type="button" class="btn primary" @click="run"><Icon name="search" /> {{ state.pendingRanges.length && !state.done ? 'Resume' : 'Start' }}</button>
           <button v-else type="button" class="btn danger" @click="stop"><Icon name="pause" /> Stop</button>
@@ -289,9 +294,9 @@ export const ScraperView = {
         </p>
         <p v-if="state.waitingFor" class="muted">GitHub asked us to slow down. Waiting {{ state.waitingFor }}s before trying again… {{ plural(state.rows.length, 'contact') }} found so far.</p>
         <p v-else-if="state.running" class="muted">
-          Searching… {{ plural(state.rows.length, 'contact') }} found so far{{ state.totalFound ? ' of up to ' + count(state.totalFound) + ' commits seen' : '' }}{{ state.skipped ? ' · ' + plural(state.skipped, 'address', 'addresses') + ' already in your contacts, left out' : '' }}.
+          Searching… {{ plural(state.rows.length, 'contact') }} found so far{{ state.totalFound ? ' of up to ' + count(state.totalFound) + ' accounts checked' : '' }}{{ state.skipped ? ' · ' + plural(state.skipped, 'address', 'addresses') + ' already in your contacts, left out' : '' }}.
         </p>
-        <p v-else-if="state.done" class="notice"><Icon name="check" /><span>Went through the entire commit history. {{ plural(state.rows.length, 'contact') }} found{{ state.skipped ? ' · ' + plural(state.skipped, 'address', 'addresses') + ' already in your contacts, left out' : '' }}.</span></p>
+        <p v-else-if="state.done" class="notice"><Icon name="check" /><span>Went through every GitHub account. {{ plural(state.rows.length, 'contact') }} found{{ state.skipped ? ' · ' + plural(state.skipped, 'address', 'addresses') + ' already in your contacts, left out' : '' }}.</span></p>
         <p v-else-if="state.rows.length && state.skipped" class="muted">{{ plural(state.skipped, 'address', 'addresses') }} already in your contacts were left out.</p>
       </div>
 
