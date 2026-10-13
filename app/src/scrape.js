@@ -7,7 +7,7 @@
 // Needs the optional GH_API_TOKEN secret, because GitHub only allows this kind of search when signed in.
 
 import { cleanEmail } from '../public/shared/email.js';
-import { ALLOWED_DOMAINS, LOOKS_GENERATED } from './emailFilters.js';
+import { ALLOWED_DOMAINS, EXCLUDED_LOCATIONS, LOOKS_GENERATED } from './emailFilters.js';
 import { check, HttpError } from './http.js';
 
 const PER_PAGE = 100;
@@ -37,15 +37,14 @@ function ok(email) {
   return email && ALLOWED_DOMAINS.test(email) && !LOOKS_GENERATED.test(email.split('@')[0]) ? email : '';
 }
 
-// The public email on a GitHub profile, if the person chose to set one. Most have not, which is
-// exactly why this is tried first: it costs nothing against the scarce search quota either way.
-async function profileContact(env, login) {
+// The public profile, free against a different, far more generous rate limit than the search
+// quota itself. Its email (if the person chose to set one) is tried first for exactly that
+// reason, and its location is the only signal available for the country filter below — an email
+// address carries no country information, and this comes along for free with the same request.
+async function profile(env, login) {
   try {
     const response = await githubFetch(env, `https://api.github.com/users/${encodeURIComponent(login)}`);
-    if (!response.ok) return null;
-    const { email, name } = await response.json();
-    const clean = ok(cleanEmail(email));
-    return clean ? { name: String(name ?? '').trim(), email: clean } : null;
+    return response.ok ? await response.json() : null;
   } catch {
     return null;
   }
@@ -101,7 +100,13 @@ export async function search({ env, body }) {
       candidates.map(async (user) => {
         const login = user.login ?? '';
         if (!login) return null;
-        let contact = await profileContact(env, login);
+        const info = await profile(env, login);
+        // A blank or unrecognised location is kept, not excluded: most profiles never set one,
+        // and this is only ever a best-effort filter since an email address itself carries no
+        // country information at all.
+        if (info?.location && EXCLUDED_LOCATIONS.test(info.location)) return null;
+        const profileEmail = info ? ok(cleanEmail(info.email)) : '';
+        let contact = profileEmail ? { name: String(info.name ?? '').trim(), email: profileEmail } : null;
         if (!contact && fallbacksLeft > 0) {
           fallbacksLeft--;
           contact = await commitContact(env, login);

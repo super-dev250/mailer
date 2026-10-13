@@ -284,7 +284,7 @@ export const ScraperView = {
       <div class="card pad">
         <div style="display: flex; align-items: center; gap: 16px">
           <p class="muted" style="margin: 0; flex: 1">
-            Works through GitHub's developers on its own, resolving each one to their email — only real, reachable addresses from well-known providers like Gmail, Outlook and Yahoo — and skipping anyone already in your contacts. Keeps running while you visit other pages. Stop and Start again picks up right where it left off.
+            Works through GitHub's developers on its own, resolving each one to their email — only real, reachable addresses from well-known providers like Gmail, Outlook and Yahoo — and skipping anyone in Asia or Africa, or already in your contacts. Keeps running while you visit other pages. Stop and Start again picks up right where it left off.
           </p>
           <button v-if="!state.running" type="button" class="btn primary" @click="run"><Icon name="search" /> {{ state.pendingRanges.length && !state.done ? 'Resume' : 'Start' }}</button>
           <button v-else type="button" class="btn danger" @click="stop"><Icon name="pause" /> Stop</button>
