@@ -60,6 +60,8 @@ export async function saveSettings({ db, body }) {
     batch_size: whole(input.batch_size, 1, 500, DEFAULT_SETTINGS.batch_size),
     delay_seconds: whole(input.delay_seconds, 1, 120, DEFAULT_SETTINGS.delay_seconds),
     daily_limit: whole(input.daily_limit, 1, 2000, DEFAULT_SETTINGS.daily_limit),
+    // The Worker's cron ticks every 5 minutes, so anything finer than that cannot actually happen.
+    run_every_minutes: whole(input.run_every_minutes, 5, 1440, DEFAULT_SETTINGS.run_every_minutes),
     track_opens: Boolean(input.track_opens),
     track_clicks: Boolean(input.track_clicks),
   };

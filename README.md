@@ -64,9 +64,9 @@ Add one more repository secret, `APP_URL`, with that address.
 
 Open the address and sign in with your `APP_SECRET`. Go to **Settings** and fill in your name.
 
-### Optional: start runs from the app
+### Recommended: start runs from the app
 
-Without this step, emails go out with the next hourly run, or when you press **Run workflow** on the Mailer workflow in the Actions tab. With it, **Send test**, **Start sending** and **Resume** start a run straight away, and the **Run now** button appears in the app's sidebar.
+Without this step, emails only go out when GitHub's own `schedule:` trigger in the Mailer workflow fires, or when you press **Run workflow** on it in the Actions tab by hand. GitHub explicitly documents that trigger as best-effort — it can be delayed or silently stop firing, with no notification. With this step, the app itself reliably starts a run through Cloudflare's own Cron Triggers (a first-class, dependable feature, unlike GitHub's), so sending does not depend on GitHub's scheduler at all. How often is set on the Settings page, under **Minutes between runs** (default 60, checked every 5 minutes). It also makes **Send test**, **Start sending** and **Resume** start a run straight away, and adds the **Run now** button to the app's sidebar.
 
 1. Open <https://github.com/settings/personal-access-tokens/new> (your profile picture > **Settings** > **Developer settings** > **Personal access tokens** > **Fine-grained tokens** > **Generate new token**).
 2. Name it `mailer-dispatch`. Pick the longest expiration offered, and note the date: the app stops starting runs when it expires.

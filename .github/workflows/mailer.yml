@@ -4,12 +4,13 @@ name: Mailer
 # for replies and bounces. All of it is configured in the web app.
 
 on:
+  # This is a backup: GitHub documents its own schedule trigger as best-effort, and it can
+  # silently stop firing with no notification. The Worker's own Cloudflare Cron Trigger is what
+  # actually drives sending reliably (see app/wrangler.json and the `scheduled` handler in
+  # app/src/index.js), through the same workflow_dispatch below that "Run now" also uses. This
+  # stays as a second chance in case that is ever unavailable (e.g. DISPATCH_TOKEN expired).
   schedule:
-    # Every hour, away from the top of the hour when GitHub's scheduler is busiest. If scheduled
-    # runs silently stop firing (the workflow stays enabled, but nothing happens on schedule), a
-    # trivial push to this file is the usual fix: GitHub's scheduler has a known, undocumented
-    # habit of needing a nudge like that to pick a cron trigger back up.
-    - cron: '17 * * * *'
+    - cron: '17 * * * *' # Every hour, away from the top of the hour when GitHub's scheduler is busiest.
   workflow_dispatch:
 
 permissions:

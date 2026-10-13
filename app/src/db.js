@@ -118,6 +118,10 @@ export const DEFAULT_SETTINGS = {
   batch_size: 4,
   delay_seconds: 40,
   daily_limit: 40,
+  // How often the Worker's own Cloudflare Cron Trigger asks GitHub to run, in minutes. The cron
+  // itself fires every 5 minutes (see app/wrangler.json); this is checked on each of those ticks,
+  // so the real interval is this value rounded up to the next multiple of 5.
+  run_every_minutes: 60,
   track_opens: true,
   track_clicks: true,
 };

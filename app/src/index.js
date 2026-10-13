@@ -2,7 +2,8 @@
 // the GitHub Actions runner. The web app itself is static files in ../public.
 
 import * as api from './api.js';
-import { ready } from './db.js';
+import { DEFAULT_SETTINGS, getValues, ready } from './db.js';
+import { dispatch } from './github.js';
 import { HttpError, json } from './http.js';
 import * as runner from './runner.js';
 import * as scrape from './scrape.js';
@@ -103,5 +104,25 @@ export default {
       console.error(error);
       return json({ error: 'Something went wrong on the server.' }, 500);
     }
+  },
+
+  // Ticks every 5 minutes (see app/wrangler.json) and starts the Mailer workflow once the
+  // configured run_every_minutes has actually elapsed since the last one reported back — the
+  // same way the "Run now" button starts one, just on a timer instead of a click. GitHub Actions'
+  // own `schedule:` trigger is explicitly best-effort and can silently stop firing; Cloudflare
+  // Cron Triggers are a reliable, first-class platform feature, so this is what actually keeps
+  // sending going rather than depending on GitHub to wake itself up. Requires the optional
+  // DISPATCH_TOKEN secret — without it this quietly does nothing, same as "Run now".
+  async scheduled(event, env, context) {
+    context.waitUntil(
+      ready(env.DB)
+        .then(() => getValues(env.DB))
+        .then(({ settings, last_run }) => {
+          const minutes = Math.max(5, Number(settings?.run_every_minutes) || DEFAULT_SETTINGS.run_every_minutes);
+          const last = last_run?.at ? new Date(last_run.at).getTime() : 0;
+          if (Date.now() - last >= minutes * 60_000) return dispatch(env);
+        })
+        .catch((error) => console.error(error)),
+    );
   },
 };

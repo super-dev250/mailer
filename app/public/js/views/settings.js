@@ -24,8 +24,10 @@ export const SettingsView = {
     // What the pace settings add up to, in plain numbers.
     const pace = computed(() => {
       const minutes = Math.max(1, Math.round((form.batch_size * form.delay_seconds) / 60));
-      const perDay = Math.min(form.daily_limit, form.batch_size * 24);
-      return `One run sends up to ${count(form.batch_size)} emails in about ${minutes} min. With hourly runs that is up to ${count(perDay)} emails a day.`;
+      const runsPerDay = Math.floor(1440 / Math.max(5, form.run_every_minutes));
+      const perDay = Math.min(form.daily_limit, form.batch_size * runsPerDay);
+      const every = form.run_every_minutes >= 60 ? `${Math.round(form.run_every_minutes / 60)} h` : `${form.run_every_minutes} min`;
+      return `One run sends up to ${count(form.batch_size)} emails in about ${minutes} min. With a run every ${every} that is up to ${count(perDay)} emails a day.`;
     });
     const github = computed(() => store.overview.github);
     const workflowUrl = computed(() => `https://github.com/${github.value.repo}/actions/workflows/mailer.yml`);
@@ -86,6 +88,11 @@ export const SettingsView = {
             <label for="daily-limit">Most emails in 24 hours</label>
             <input id="daily-limit" type="number" v-model.number="form.daily_limit" min="1" max="2000">
           </div>
+          <div class="field">
+            <label for="run-every">Minutes between runs</label>
+            <input id="run-every" type="number" v-model.number="form.run_every_minutes" min="5" max="1440" step="5">
+            <span class="hint">Needs the optional DISPATCH_TOKEN secret to take effect reliably; see Automation below.</span>
+          </div>
         </div>
         <p class="muted">{{ pace }} Gmail itself stops a personal account at about 500 a day, and a slow, steady pace is what keeps a mailbox in good standing.</p>
         <div class="notice">
@@ -119,12 +126,12 @@ export const SettingsView = {
           Sent: {{ store.overview.last_run.sent }} · Failed: {{ store.overview.last_run.failed }} ·
           Replies found: {{ store.overview.last_run.replies }} · Bounces found: {{ store.overview.last_run.bounces }}
         </p>
-        <p v-else class="muted">The Mailer workflow has not reported here yet. It runs every hour once the GitHub secrets are in place.</p>
+        <p v-else class="muted">The Mailer workflow has not reported here yet. It runs once the GitHub secrets are in place.</p>
         <div v-if="store.overview.last_run && store.overview.last_run.error" class="notice problem">
           <Icon name="alert" /> <span>{{ store.overview.last_run.error }}</span>
         </div>
         <p v-if="!github.can_dispatch" class="muted">
-          Sending starts with the next hourly run. To start runs from this app instead of waiting, add the optional DISPATCH_TOKEN secret described in the README.
+          Without the optional DISPATCH_TOKEN secret, sending only happens when GitHub's own schedule in the workflow fires — which GitHub documents as best-effort and can silently stop working — or when you run it by hand on GitHub. Add DISPATCH_TOKEN (see the README) so this app reliably starts a run itself, on the "Minutes between runs" interval above, through Cloudflare's own scheduler instead.
         </p>
         <div v-if="github.repo" class="row">
           <a class="btn" :href="workflowUrl" target="_blank" rel="noopener">Open the workflow on GitHub <Icon name="external" /></a>
