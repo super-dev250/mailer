@@ -95,7 +95,7 @@ ever restricts one, the others keep working.
 3. In the app, open **Mailboxes**. The first time the workflow runs after this, each address in `GMAIL_ACCOUNTS` appears there on its own, with a starting pace from the same safe defaults a single mailbox gets. Click **Edit** to rename one or change its pace, or **Add mailbox** to register one before the first run.
 4. Open each new campaign's **Send from** field and choose which mailbox sends it. With only one mailbox this never needs touching; with more than one, every campaign needs a mailbox chosen before it can send a test or start.
 
-The Mailer workflow runs one job per account in `GMAIL_ACCOUNTS`, in parallel, each with its own 30-minute budget — so adding accounts does not slow the others down. `SMTP_HOST` and `IMAP_HOST` (see "Another mailbox" below) apply to every account in `GMAIL_ACCOUNTS` alike; mixing Gmail with a different provider in one setup is not supported.
+The Mailer workflow runs one job per account in `GMAIL_ACCOUNTS`, in parallel, each with its own 30-minute budget — so adding accounts does not slow the others down. It supports up to 5 accounts out of the box; past that, open [.github/workflows/mailer.yml](.github/workflows/mailer.yml) and add more numbers to the `matrix: index:` list near the top (the comment above it explains why that list is fixed rather than computed from the secret). `SMTP_HOST` and `IMAP_HOST` (see "Another mailbox" below) apply to every account in `GMAIL_ACCOUNTS` alike; mixing Gmail with a different provider in one setup is not supported.
 
 ### Optional: find GitHub contacts
 

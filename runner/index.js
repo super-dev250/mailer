@@ -16,18 +16,22 @@ if (missing.length) {
   process.exit(0);
 }
 
-// One mailbox: GMAIL_USER/GMAIL_APP_PASSWORD, as before. Several: GMAIL_ACCOUNTS holds all of
-// them as JSON, and the workflow's matrix picks one by MAILBOX_INDEX for this particular job.
-// See the README for how the workflow builds that matrix from the same secret.
+// One mailbox: GMAIL_USER/GMAIL_APP_PASSWORD, as before, used by slot 0 only. Several:
+// GMAIL_ACCOUNTS holds all of them as JSON, and the workflow hands each of its fixed slots a
+// MAILBOX_INDEX into that list. An index past the end of the list (or past 0, for the single
+// legacy mailbox) is a normal, unused slot, not an error — most of the workflow's slots are
+// unused on a day with only one or two mailboxes configured, and exit quietly below.
+const index = Number(env.MAILBOX_INDEX ?? 0);
+
 function account() {
   if (env.GMAIL_ACCOUNTS?.trim()) {
-    const accounts = JSON.parse(env.GMAIL_ACCOUNTS);
-    const index = Number(env.MAILBOX_INDEX ?? 0);
+    const accounts = JSON.parse(env.GMAIL_ACCOUNTS); // malformed JSON is a real error: let it throw
     const picked = accounts[index];
-    if (!picked?.user || !picked?.app_password) throw new Error(`GMAIL_ACCOUNTS has no usable entry at index ${index}.`);
-    return picked;
+    return picked?.user && picked?.app_password ? picked : null;
   }
-  if (env.GMAIL_USER?.trim() && env.GMAIL_APP_PASSWORD?.trim()) return { user: env.GMAIL_USER, app_password: env.GMAIL_APP_PASSWORD };
+  if (index === 0 && env.GMAIL_USER?.trim() && env.GMAIL_APP_PASSWORD?.trim()) {
+    return { user: env.GMAIL_USER, app_password: env.GMAIL_APP_PASSWORD };
+  }
   return null;
 }
 
@@ -35,11 +39,17 @@ let picked;
 try {
   picked = account();
 } catch (error) {
-  console.log(`::warning::Mailer is not set up yet. ${error.message} See the README.`);
+  // Only the first slot reports a real misconfiguration, so it is not repeated five times over.
+  if (index === 0) console.log(`::warning::GMAIL_ACCOUNTS is not set up correctly: ${error.message} See the README.`);
   process.exit(0);
 }
 if (!picked) {
-  console.log('::warning::Mailer is not set up yet. Missing secrets: GMAIL_USER, GMAIL_APP_PASSWORD (or GMAIL_ACCOUNTS). See the README.');
+  if (index === 0 && !env.GMAIL_ACCOUNTS?.trim() && !env.GMAIL_USER?.trim()) {
+    // Not a failure: the schedule starts with the first push, before setup is finished.
+    console.log('::warning::Mailer is not set up yet. Missing secrets: GMAIL_USER, GMAIL_APP_PASSWORD (or GMAIL_ACCOUNTS). See the README.');
+  } else {
+    console.log(`No mailbox configured for slot ${index}.`);
+  }
   process.exit(0);
 }
 

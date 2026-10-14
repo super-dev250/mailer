@@ -3,9 +3,17 @@ name: Mailer
 # Sends the next batch of queued emails through Gmail, then reads the mailbox
 # for replies and bounces. All of it is configured in the web app.
 #
-# One job per Gmail account: with a single mailbox this is exactly the one job it always was;
-# with several (the GMAIL_ACCOUNTS secret — see the README), they run in parallel, each with its
-# own send pace and its own inbox, so one account's volume or reputation never affects another's.
+# One job per Gmail account, up to MAILBOX_SLOTS (5) below. With a single mailbox this is
+# exactly the one job it always was, plus a few unused slots that start, see there is no account
+# configured for them, and end in a couple of seconds. With several (the GMAIL_ACCOUNTS secret —
+# see the README), the used slots run in parallel, each with its own send pace and its own inbox,
+# so one account's volume or reputation never affects another's.
+#
+# The slot count can't be computed from GMAIL_ACCOUNTS and handed to the matrix below: GitHub
+# Actions blanks any `$GITHUB_OUTPUT` written anywhere in a job that has touched a secret,
+# regardless of the output's own value, so there is no way to pass "how many accounts" between
+# jobs without running into that. A fixed list of slots sidesteps it entirely — nothing here is
+# ever derived from a secret. Need more than 5 mailboxes? Add more numbers to the list below.
 
 on:
   # This is a backup: GitHub documents its own schedule trigger as best-effort, and it can
@@ -21,39 +29,14 @@ permissions:
   contents: read
 
 jobs:
-  mailboxes:
-    name: List mailboxes
-    runs-on: ubuntu-latest
-    outputs:
-      indexes: ${{ steps.list.outputs.indexes }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      # Split in two: GitHub Actions silently blanks *any* $GITHUB_OUTPUT written by a step whose
-      # own env holds a secret — regardless of the value, even a harmless list of small numbers —
-      # so the step that can see the secrets writes to a plain file instead, and a separate step
-      # with no secret in its own env reads that file and is the one that sets the output.
-      - name: Count configured mailboxes
-        run: node scripts/mailbox-matrix.mjs > mailbox-indexes.json
-        env:
-          GMAIL_ACCOUNTS: ${{ secrets.GMAIL_ACCOUNTS }}
-          GMAIL_USER: ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-      - id: list
-        run: echo "indexes=$(cat mailbox-indexes.json)" >> "$GITHUB_OUTPUT"
-
   run:
     name: Send and check
-    needs: mailboxes
-    if: needs.mailboxes.outputs.indexes != '[]'
     strategy:
       matrix:
-        index: ${{ fromJson(needs.mailboxes.outputs.indexes) }}
+        index: [0, 1, 2, 3, 4] # MAILBOX_SLOTS
       # One mailbox having a bad run (a wrong password, Gmail blocking it) should not stop the others.
       fail-fast: false
-    # One run per mailbox at a time, so a mailbox's own inbox is never used by two runs at once.
+    # One run per mailbox slot at a time, so a mailbox's own inbox is never used by two runs at once.
     concurrency:
       group: mailer-${{ matrix.index }}
       cancel-in-progress: false
