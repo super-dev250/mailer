@@ -56,6 +56,5 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           GMAIL_ACCOUNTS: ${{ secrets.GMAIL_ACCOUNTS }}
-          BREVO_SMTP_LOGIN: ${{ secrets.BREVO_SMTP_LOGIN }}
-          BREVO_SMTP_KEY: ${{ secrets.BREVO_SMTP_KEY }}
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           MAILBOX_INDEX: ${{ matrix.index }}

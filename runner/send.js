@@ -19,7 +19,11 @@ const toText = (html) =>
     ],
   });
 
-export function createMailer({ user, transport }) {
+export function createMailer({ user, transport, brevoApiKey }) {
+  return brevoApiKey ? createBrevoMailer({ user, apiKey: brevoApiKey }) : createSmtpMailer({ user, transport });
+}
+
+function createSmtpMailer({ user, transport }) {
   // One connection for the whole batch instead of a new login per email.
   const connection = nodemailer.createTransport({ ...transport, pool: true, maxConnections: 1 });
 
@@ -51,6 +55,56 @@ export function createMailer({ user, transport }) {
   };
 }
 
+// Sends through Brevo's HTTP API instead of its SMTP relay. The API isn't locked to a
+// pre-authorized IP the way Brevo's SMTP login is, so it works from GitHub's shared runners.
+function createBrevoMailer({ user, apiKey }) {
+  return {
+    async send({ message, campaign, settings, baseUrl }) {
+      const { subject, html, unsubscribeUrl } = renderEmail({
+        campaign,
+        contact: message.contact,
+        settings,
+        token: message.token,
+        baseUrl,
+        test: message.test,
+      });
+      const headers = { 'Message-ID': messageId(message.token, user) };
+      if (settings.footer) {
+        headers['List-Unsubscribe'] = `<${unsubscribeUrl}>`;
+        headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
+      }
+      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          sender: { name: settings.sender_name, email: user },
+          to: [{ email: message.to }],
+          subject,
+          htmlContent: html,
+          textContent: toText(html),
+          headers,
+          attachment: (campaign.files ?? []).map((file) => ({ name: file.filename, content: file.content.toString('base64') })),
+        }),
+      });
+      if (!response.ok) throw await brevoError(response);
+    },
+    close: () => {},
+  };
+}
+
+async function brevoError(response) {
+  const body = await response.json().catch(() => ({}));
+  const detail = [body.code, body.message].filter(Boolean).join(': ') || `Brevo responded ${response.status}`;
+  const error = new Error(detail);
+  error.response = `${response.status} ${detail}`;
+  error.responseCode = response.status;
+  // Brevo's API: 401 is a bad or revoked key; 400 is usually the request itself, most often a
+  // recipient address Brevo won't accept — the two cases explainSendError below already handles.
+  if (response.status === 401) error.code = 'EAUTH';
+  if (response.status === 400) error.code = 'EENVELOPE';
+  return error;
+}
+
 /**
  * Decides what a failed send means: `stop` ends the run and leaves the remaining emails queued,
  * otherwise only this one email is marked as failed. `badAddress` says the mail server refused
@@ -59,7 +113,7 @@ export function createMailer({ user, transport }) {
 export function explainSendError(error) {
   const detail = String(error.response || error.message || error).replace(/\s+/g, ' ').trim();
   if (error.code === 'EAUTH') {
-    return { stop: true, reason: `The mailbox rejected the login. Check GMAIL_USER and GMAIL_APP_PASSWORD, or BREVO_SMTP_LOGIN and BREVO_SMTP_KEY if sending through Brevo. (${detail})` };
+    return { stop: true, reason: `The mailbox rejected the login. Check GMAIL_USER and GMAIL_APP_PASSWORD, or BREVO_API_KEY if sending through Brevo. (${detail})` };
   }
   if (/5\.4\.5|sending limit|quota exceeded/i.test(detail)) {
     return { stop: true, reason: `The mailbox reached its sending limit, so the rest waits for a later run. (${detail})` };

@@ -55,31 +55,23 @@ if (!picked) {
 
 const user = picked.user.trim();
 // Google shows app passwords in four groups separated by spaces.
-const imapAuth = { user, pass: picked.app_password.replace(/\s+/g, '') };
-// Brevo sends the mail itself, while the Gmail login above still reads that mailbox's inbox for
-// replies and bounces — Brevo is a send-only relay, it has no inbox of its own to check. Each
-// GMAIL_ACCOUNTS entry can carry its own brevo_login/brevo_key, so different mailboxes can go
-// through different Brevo accounts (or Brevo plus a mailbox still left on Gmail's own SMTP).
-// BREVO_SMTP_LOGIN/BREVO_SMTP_KEY are the fallback: the legacy single mailbox's only option,
-// and whatever an account in GMAIL_ACCOUNTS doesn't set for itself.
-const brevoLogin = (picked.brevo_login || env.BREVO_SMTP_LOGIN)?.trim();
-const brevoKey = (picked.brevo_key || env.BREVO_SMTP_KEY)?.trim();
-const usingBrevo = Boolean(brevoLogin && brevoKey);
-const smtpAuth = usingBrevo ? { user: brevoLogin, pass: brevoKey } : imapAuth;
-const smtpPort = Number(env.SMTP_PORT) || (usingBrevo ? 587 : 465);
-const smtp = {
-  host: env.SMTP_HOST || (usingBrevo ? 'smtp-relay.brevo.com' : 'smtp.gmail.com'),
-  port: smtpPort,
-  secure: smtpPort === 465,
-  auth: smtpAuth,
-};
-const imap = { host: env.IMAP_HOST || 'imap.gmail.com', port: Number(env.IMAP_PORT) || 993, secure: true, auth: imapAuth };
+const auth = { user, pass: picked.app_password.replace(/\s+/g, '') };
+// The defaults are Gmail's. Another mailbox works by setting SMTP_HOST and IMAP_HOST.
+const smtpPort = Number(env.SMTP_PORT) || 465;
+const smtp = { host: env.SMTP_HOST || 'smtp.gmail.com', port: smtpPort, secure: smtpPort === 465, auth };
+const imap = { host: env.IMAP_HOST || 'imap.gmail.com', port: Number(env.IMAP_PORT) || 993, secure: true, auth };
+// Brevo's HTTP API sends the mail itself if brevo_api_key is set (per account in GMAIL_ACCOUNTS,
+// or BREVO_API_KEY as a shared fallback for every account / the legacy single mailbox) — unlike
+// its SMTP relay, the API isn't locked to a pre-authorized IP, so it works from GitHub's own
+// hosted runners. The Gmail login above still reads that mailbox's inbox for replies and
+// bounces either way, since Brevo has no inbox of its own to check.
+const brevoApiKey = (picked.brevo_api_key || env.BREVO_API_KEY)?.trim();
 
 let summary;
 try {
   summary = await run({
     app: createApp(env.APP_URL, env.APP_SECRET.trim()),
-    mailer: createMailer({ user, transport: smtp }),
+    mailer: createMailer({ user, transport: smtp, brevoApiKey }),
     checkInbox: (state) => checkInbox({ imap, user, ...state }),
     user,
   });
