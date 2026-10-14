@@ -59,7 +59,7 @@ export function createMailer({ user, transport }) {
 export function explainSendError(error) {
   const detail = String(error.response || error.message || error).replace(/\s+/g, ' ').trim();
   if (error.code === 'EAUTH') {
-    return { stop: true, reason: `The mailbox rejected the login. Check GMAIL_USER and GMAIL_APP_PASSWORD. (${detail})` };
+    return { stop: true, reason: `The mailbox rejected the login. Check GMAIL_USER and GMAIL_APP_PASSWORD, or BREVO_SMTP_LOGIN and BREVO_SMTP_KEY if sending through Brevo. (${detail})` };
   }
   if (/5\.4\.5|sending limit|quota exceeded/i.test(detail)) {
     return { stop: true, reason: `The mailbox reached its sending limit, so the rest waits for a later run. (${detail})` };
