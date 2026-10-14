@@ -3,11 +3,12 @@
 // and its own inbox.
 
 import { computed, reactive, ref } from '/vendor/vue.js';
+import { DEFAULT_MAILBOX_PACE } from '/shared/pace.js';
 import { api, refreshOverview } from '../api.js';
 import { ago, count } from '../format.js';
 import { ask, problem, store, toast } from '../store.js';
 
-const EMPTY_FORM = { email: '', name: '', sender_name: '', batch_size: 4, delay_seconds: 40, daily_limit: 40 };
+const EMPTY_FORM = { email: '', name: '', sender_name: '', ...DEFAULT_MAILBOX_PACE };
 
 export const MailboxesView = {
   setup() {
@@ -24,6 +25,10 @@ export const MailboxesView = {
       Object.assign(form, mailbox);
       dialog.value = mailbox.id;
     }
+    // Resets just the pace fields, so a mailbox tweaked into something unsafe (or left over from
+    // before this app tracked pace per mailbox) is one click from the same cautious starting point
+    // every new mailbox gets.
+    const useSafeDefaults = () => Object.assign(form, DEFAULT_MAILBOX_PACE);
 
     const act = (work) => async () => {
       busy.value = true;
@@ -77,8 +82,8 @@ export const MailboxesView = {
     };
 
     return {
-      mailboxes, dialog, form, busy, openAdd, openEdit, save, toggleStatus,
-      remove, pace, runSummary, count,
+      mailboxes, dialog, form, busy, openAdd, openEdit, useSafeDefaults, save, toggleStatus,
+      remove, pace, runSummary, count, DEFAULT_MAILBOX_PACE,
     };
   },
   template: `
@@ -137,6 +142,11 @@ export const MailboxesView = {
         <input id="mailbox-sender" type="text" v-model="form.sender_name" maxlength="100" placeholder="Sam Road">
         <span class="hint">Shown to recipients as who the email is from.</span>
       </div>
+      <div class="row">
+        <span class="label">Pace</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn compact" @click="useSafeDefaults">Use safe defaults</button>
+      </div>
       <div class="field-row">
         <div class="field">
           <label for="mailbox-batch">Emails per run</label>
@@ -151,7 +161,10 @@ export const MailboxesView = {
           <input id="mailbox-daily" type="number" v-model.number="form.daily_limit" min="1" max="2000">
         </div>
       </div>
-      <p class="muted small">A safe pace for a mailbox with no sending history: 20&ndash;40 a day, in batches of 3&ndash;5, raised gradually. See Settings for the full guidance.</p>
+      <p class="muted small">
+        "Use safe defaults" sets {{ DEFAULT_MAILBOX_PACE.batch_size }} per run, {{ DEFAULT_MAILBOX_PACE.delay_seconds }}s apart, {{ DEFAULT_MAILBOX_PACE.daily_limit }} a day
+        &mdash; a cautious pace for a mailbox with no sending history. See Settings for the full guidance on raising it gradually.
+      </p>
       <template #foot>
         <button type="button" class="btn" @click="dialog = ''">Cancel</button>
         <button type="button" class="btn primary" :disabled="busy || (dialog === 'add' && !form.email.trim())" @click="save">Save</button>

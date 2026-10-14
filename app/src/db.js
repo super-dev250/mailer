@@ -1,5 +1,7 @@
 // The database creates and upgrades its own tables on first use, so there is no migration step to run.
 
+import { DEFAULT_MAILBOX_PACE, DEFAULT_RUN_EVERY_MINUTES } from '../public/shared/pace.js';
+
 // Each entry upgrades the database by one version. Only ever add to the end.
 export const MIGRATIONS = [
   // 1: the original tables.
@@ -141,9 +143,10 @@ export const MIGRATIONS = [
   ],
 ];
 
-// Used when a mailbox is created without its own pace, including the very first time a
-// mailbox is seen (auto-registered by the runner's first claim).
-export const DEFAULT_MAILBOX_PACE = { batch_size: 4, delay_seconds: 40, daily_limit: 40 };
+// Used when a mailbox is created without its own pace, including the very first time a mailbox
+// is seen (auto-registered by the runner's first claim), and by the app's "Use safe defaults"
+// buttons. Shared with the browser so both sides always agree on what "safe" means.
+export { DEFAULT_MAILBOX_PACE, DEFAULT_RUN_EVERY_MINUTES };
 
 // Everything here applies across every mailbox. Sender name and pace (batch size, delay, daily
 // limit) are per mailbox instead — see the `mailboxes` table and DEFAULT_MAILBOX_PACE above.
@@ -155,7 +158,7 @@ export const DEFAULT_SETTINGS = {
   // How often the Worker's own Cloudflare Cron Trigger asks GitHub to run, in minutes. The cron
   // itself fires every 5 minutes (see app/wrangler.json); this is checked on each of those ticks,
   // so the real interval is this value rounded up to the next multiple of 5.
-  run_every_minutes: 60,
+  run_every_minutes: DEFAULT_RUN_EVERY_MINUTES,
   track_opens: true,
   track_clicks: true,
 };

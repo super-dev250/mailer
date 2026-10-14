@@ -1,4 +1,5 @@
 import { computed, reactive, ref } from '/vendor/vue.js';
+import { DEFAULT_RUN_EVERY_MINUTES } from '/shared/pace.js';
 import { api, refreshOverview } from '../api.js';
 import { problem, store, toast } from '../store.js';
 
@@ -25,7 +26,7 @@ export const SettingsView = {
     const mailboxes = computed(() => store.overview.mailboxes);
     const failing = computed(() => mailboxes.value.filter((mailbox) => mailbox.last_run?.error));
 
-    return { form, busy, save, github, workflowUrl, mailboxes, failing, store };
+    return { form, busy, save, github, workflowUrl, mailboxes, failing, store, DEFAULT_RUN_EVERY_MINUTES };
   },
   template: `
     <div class="page-head">
@@ -77,10 +78,16 @@ export const SettingsView = {
 
       <div class="card pad stack">
         <h2>Automation</h2>
-        <div class="field" style="max-width: 220px">
-          <label for="run-every">Minutes between runs</label>
+        <div class="field" style="max-width: 320px">
+          <div class="row">
+            <label for="run-every">Minutes between runs</label>
+            <span class="spacer"></span>
+            <button type="button" class="btn compact" @click="form.run_every_minutes = DEFAULT_RUN_EVERY_MINUTES">Use safe default</button>
+          </div>
           <input id="run-every" type="number" v-model.number="form.run_every_minutes" min="5" max="1440" step="5">
-          <span class="hint">Applies to every mailbox. Needs the optional DISPATCH_TOKEN secret to take effect reliably — see below.</span>
+          <span class="hint">
+            Applies to every mailbox. "Use safe default" sets {{ DEFAULT_RUN_EVERY_MINUTES }} (once an hour) — frequent enough to check for replies promptly, without hammering the GitHub Actions free tier. Needs the optional DISPATCH_TOKEN secret to take effect reliably — see below.
+          </span>
         </div>
         <p v-if="mailboxes.length" class="muted">
           {{ mailboxes.length }} mailbox{{ mailboxes.length === 1 ? '' : 'es' }} configured. Pace and run history are on the <a href="#/mailboxes">Mailboxes</a> page.

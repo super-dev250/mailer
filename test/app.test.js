@@ -83,6 +83,14 @@ test('a campaign cannot start or send a test without a mailbox to send from', as
   assert.equal(created.status, 200);
   mailboxId = created.body.id;
   assert.equal((await post('/api/mailboxes', { email: 'me@gmail.com' })).status, 409, 'the address is already a mailbox');
+
+  // No pace given: it gets the same safe starting numbers the "Use safe defaults" button sets,
+  // and the "No runs yet" auto-registration a brand-new mailbox gets from the runner's first claim.
+  const mailbox = (await get('/api/overview')).body.mailboxes.find((item) => item.id === mailboxId);
+  assert.deepEqual(
+    { batch_size: mailbox.batch_size, delay_seconds: mailbox.delay_seconds, daily_limit: mailbox.daily_limit },
+    { batch_size: 4, delay_seconds: 40, daily_limit: 40 },
+  );
 });
 
 test('a campaign without content or contacts cannot start', async () => {
