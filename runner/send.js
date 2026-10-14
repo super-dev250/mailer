@@ -73,6 +73,10 @@ function createBrevoMailer({ user, apiKey }) {
         headers['List-Unsubscribe'] = `<${unsubscribeUrl}>`;
         headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click';
       }
+      // Brevo rejects an empty "attachment" array outright ("missing_parameter: attachment is
+      // missing") rather than treating it as no attachments, so the field is left out entirely
+      // when there is nothing to attach.
+      const attachment = (campaign.files ?? []).map((file) => ({ name: file.filename, content: file.content.toString('base64') }));
       const response = await fetch('https://api.brevo.com/v3/smtp/email', {
         method: 'POST',
         headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' },
@@ -83,7 +87,7 @@ function createBrevoMailer({ user, apiKey }) {
           htmlContent: html,
           textContent: toText(html),
           headers,
-          attachment: (campaign.files ?? []).map((file) => ({ name: file.filename, content: file.content.toString('base64') })),
+          ...(attachment.length ? { attachment } : {}),
         }),
       });
       if (!response.ok) throw await brevoError(response);
