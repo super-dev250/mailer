@@ -161,12 +161,12 @@ This only ever covers the one workspace the token belongs to. Searching several 
 - **Sending through Brevo instead of Gmail.** Gmail's own SMTP still works, but a personal Gmail account can get flagged for bulk sending. To send through [Brevo](https://www.brevo.com) instead (Gmail still reads replies and bounces — Brevo is send-only, it has no inbox):
   1. Create a free Brevo account (300 emails/day, no monthly cap). With several Gmail mailboxes, a separate free Brevo account per mailbox keeps each one's sending reputation and daily cap independent — reusing one Brevo account across mailboxes works too, it just shares that cap and reputation between them.
   2. In each Brevo account, go to **Senders, Domains & Dedicated IPs > Senders** and add the Gmail address it sends for; confirm it from the email Brevo sends. This is required before Brevo will relay mail "from" that address — without it, sends are rejected. For better deliverability later, you can instead verify a domain you own there (adds SPF/DKIM), but single-sender verification is enough to start.
-  3. In each Brevo account, go to **SMTP & API > SMTP** to find its SMTP login (an address ending `@smtp-brevo.com` or similar, shown on that page) and generate an SMTP key (not your account password).
-  4. **One mailbox:** add two repository secrets, `BREVO_SMTP_LOGIN` and `BREVO_SMTP_KEY`, from step 3. **Several mailboxes, each through its own Brevo account:** give each entry in the `GMAIL_ACCOUNTS` secret its own `brevo_login`/`brevo_key` instead:
+  3. In each Brevo account, go to **SMTP & API > SMTP**. It shows a "Login" (the same email you sign into that Brevo account with) and lets you generate an SMTP key as the "Password" — use that key, not your account password.
+  4. **One mailbox:** add two repository secrets, `BREVO_SMTP_LOGIN` (the login from step 3) and `BREVO_SMTP_KEY` (the key you generated). **Several mailboxes, each through its own Brevo account:** give each entry in the `GMAIL_ACCOUNTS` secret its own `brevo_login`/`brevo_key` instead, using that Brevo account's own login and key — not the Gmail address itself:
      ```json
      [
-       { "user": "you@gmail.com", "app_password": "aaaa bbbb cccc dddd", "brevo_login": "xxxxxx001@smtp-brevo.com", "brevo_key": "xsmtpsib-aaaa..." },
-       { "user": "you.backup@gmail.com", "app_password": "eeee ffff gggg hhhh", "brevo_login": "xxxxxx002@smtp-brevo.com", "brevo_key": "xsmtpsib-bbbb..." }
+       { "user": "you@gmail.com", "app_password": "aaaa bbbb cccc dddd", "brevo_login": "you@brevo-account-1.com", "brevo_key": "xsmtpsib-aaaa..." },
+       { "user": "you.backup@gmail.com", "app_password": "eeee ffff gggg hhhh", "brevo_login": "you@brevo-account-2.com", "brevo_key": "xsmtpsib-bbbb..." }
      ]
      ```
      An entry without `brevo_login`/`brevo_key` falls back to the top-level `BREVO_SMTP_LOGIN`/`BREVO_SMTP_KEY` secrets if those are set, or to Gmail's own SMTP otherwise — so Brevo, and which Brevo account, can be set per mailbox. `GMAIL_USER`/`GMAIL_APP_PASSWORD` (or each account's `user`/`app_password`) keep doing what they did before: logging into Gmail to read that mailbox's replies and bounces.
